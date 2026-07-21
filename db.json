@@ -1,0 +1,386 @@
+{
+  "departments": [
+    {
+      "id": "dep-1",
+      "name": "General Medicine",
+      "prefix": "GEN"
+    },
+    {
+      "id": "dep-2",
+      "name": "Pediatrics",
+      "prefix": "PEDS"
+    },
+    {
+      "id": "dep-3",
+      "name": "Cardiology",
+      "prefix": "CARD"
+    },
+    {
+      "id": "dep-4",
+      "name": "Orthopedics",
+      "prefix": "ORTH"
+    },
+    {
+      "id": "dep-5",
+      "name": "Ophthalmology",
+      "prefix": "EYE"
+    }
+  ],
+  "doctors": [
+    {
+      "id": "doc-1",
+      "name": "Dr. Sarah Jenkins",
+      "departmentId": "dep-1",
+      "specialization": "Primary Care / Family Medicine",
+      "status": "active"
+    },
+    {
+      "id": "doc-2",
+      "name": "Dr. Robert Chen",
+      "departmentId": "dep-1",
+      "specialization": "Internal Medicine",
+      "status": "active"
+    },
+    {
+      "id": "doc-3",
+      "name": "Dr. Alisha Patel",
+      "departmentId": "dep-3",
+      "specialization": "Interventional Cardiology",
+      "status": "active"
+    },
+    {
+      "id": "doc-4",
+      "name": "Dr. Marcus Vance",
+      "departmentId": "dep-4",
+      "specialization": "Bone & Joint Surgery",
+      "status": "active"
+    },
+    {
+      "id": "doc-5",
+      "name": "Dr. Emily Wong",
+      "departmentId": "dep-2",
+      "specialization": "General Pediatrics",
+      "status": "active"
+    },
+    {
+      "id": "doc-6",
+      "name": "Dr. Arthur Pendelton",
+      "departmentId": "dep-5",
+      "specialization": "Refractive Surgery",
+      "status": "active"
+    }
+  ],
+  "users": [
+    {
+      "id": "user-1",
+      "username": "admin",
+      "name": "Dr. Helen Vance (Chief Administrator)",
+      "role": "admin"
+    },
+    {
+      "id": "user-2",
+      "username": "reception",
+      "name": "Claire Redfield (Senior Registrar)",
+      "role": "receptionist",
+      "departmentId": "dep-1"
+    },
+    {
+      "id": "user-3",
+      "username": "reception2",
+      "name": "Leon S. Kennedy (Junior Clerk)",
+      "role": "receptionist"
+    }
+  ],
+  "patients": [
+    {
+      "id": "pat-1",
+      "name": "John Doe",
+      "mobile": "+1 (555) 019-2831",
+      "age": 42,
+      "gender": "male",
+      "createdAt": "2026-07-16T10:00:00Z"
+    },
+    {
+      "id": "pat-2",
+      "name": "Jane Smith",
+      "mobile": "+1 (555) 023-4567",
+      "age": 29,
+      "gender": "female",
+      "createdAt": "2026-07-16T11:30:00Z"
+    },
+    {
+      "id": "pat-3",
+      "name": "Michael Kaiser",
+      "mobile": "+1 (555) 088-1212",
+      "age": 64,
+      "gender": "male",
+      "createdAt": "2026-07-17T08:00:00Z"
+    },
+    {
+      "id": "pat-4",
+      "name": "Sofia Rodriguez",
+      "mobile": "+1 (555) 099-3443",
+      "age": 8,
+      "gender": "female",
+      "createdAt": "2026-07-17T08:15:00Z"
+    },
+    {
+      "id": "pat-1784387026537",
+      "name": "sudais",
+      "mobile": "123456789",
+      "age": 13,
+      "gender": "male",
+      "createdAt": "2026-07-18T15:03:46.537Z"
+    },
+    {
+      "id": "pat-1784387135008",
+      "name": "shiab",
+      "mobile": "123456781",
+      "age": 18,
+      "gender": "male",
+      "createdAt": "2026-07-18T15:05:35.008Z"
+    }
+  ],
+  "tokens": [
+    {
+      "id": "tok-1",
+      "tokenNumber": "GEN-001",
+      "patientName": "John Doe",
+      "patientMobile": "+1 (555) 019-2831",
+      "patientAge": 42,
+      "patientGender": "male",
+      "departmentId": "dep-1",
+      "departmentName": "General Medicine",
+      "doctorId": "doc-1",
+      "doctorName": "Dr. Sarah Jenkins",
+      "reasonForVisit": "Annual physical checkup",
+      "status": "completed",
+      "createdAt": "2026-07-17T08:10:00Z",
+      "calledAt": "2026-07-17T08:15:00Z",
+      "completedAt": "2026-07-17T08:30:00Z",
+      "isEmergency": false,
+      "priority": "Normal",
+      "position": 1
+    },
+    {
+      "id": "tok-2",
+      "tokenNumber": "PEDS-001",
+      "patientName": "Sofia Rodriguez",
+      "patientMobile": "+1 (555) 099-3443",
+      "patientAge": 8,
+      "patientGender": "female",
+      "departmentId": "dep-2",
+      "departmentName": "Pediatrics",
+      "doctorId": "doc-5",
+      "doctorName": "Dr. Emily Wong",
+      "reasonForVisit": "Severe dry cough",
+      "status": "called",
+      "createdAt": "2026-07-17T08:18:00Z",
+      "calledAt": "2026-07-17T08:35:00Z",
+      "isEmergency": false,
+      "priority": "Normal",
+      "position": 2,
+      "notifiedYourTurn": true
+    },
+    {
+      "id": "tok-3",
+      "tokenNumber": "CARD-001",
+      "patientName": "Michael Kaiser",
+      "patientMobile": "+1 (555) 088-1212",
+      "patientAge": 64,
+      "patientGender": "male",
+      "departmentId": "dep-3",
+      "departmentName": "Cardiology",
+      "doctorId": "doc-3",
+      "doctorName": "Dr. Alisha Patel",
+      "reasonForVisit": "Mild chest tightness and high BP follow-up",
+      "status": "waiting",
+      "createdAt": "2026-07-17T08:22:00Z",
+      "isEmergency": true,
+      "priority": "Senior Citizen",
+      "position": 3,
+      "estimatedWaitTime": 0,
+      "expectedConsultationStartTime": "2026-07-18T15:05:35.010Z",
+      "lastNotifiedWaitTime": 0
+    },
+    {
+      "id": "tok-4",
+      "tokenNumber": "ORTH-001",
+      "patientName": "Amara Okoye",
+      "patientMobile": "+1 (555) 033-4455",
+      "patientAge": 35,
+      "patientGender": "female",
+      "departmentId": "dep-4",
+      "departmentName": "Orthopedics",
+      "doctorId": "doc-4",
+      "doctorName": "Dr. Marcus Vance",
+      "reasonForVisit": "Post-surgery knee evaluation",
+      "status": "waiting",
+      "createdAt": "2026-07-17T08:28:00Z",
+      "isEmergency": false,
+      "priority": "Normal",
+      "position": 4,
+      "estimatedWaitTime": 0,
+      "expectedConsultationStartTime": "2026-07-18T15:05:35.010Z",
+      "lastNotifiedWaitTime": 0
+    },
+    {
+      "id": "tok-1784387026537",
+      "tokenNumber": "GEN-001",
+      "patientName": "sudais",
+      "patientMobile": "123456789",
+      "patientAge": 13,
+      "patientGender": "male",
+      "departmentId": "dep-1",
+      "departmentName": "General Medicine",
+      "doctorId": "doc-1",
+      "doctorName": "Dr. Sarah Jenkins",
+      "reasonForVisit": "",
+      "status": "waiting",
+      "createdAt": "2026-07-18T15:03:46.537Z",
+      "isEmergency": false,
+      "priority": "Normal",
+      "position": 3,
+      "estimatedWaitTime": 0,
+      "expectedConsultationStartTime": "2026-07-18T15:05:35.008Z",
+      "lastNotifiedWaitTime": 0
+    },
+    {
+      "id": "tok-1784387135007",
+      "tokenNumber": "GEN-002",
+      "patientName": "shiab",
+      "patientMobile": "123456781",
+      "patientAge": 18,
+      "patientGender": "male",
+      "departmentId": "dep-1",
+      "departmentName": "General Medicine",
+      "doctorId": "doc-2",
+      "doctorName": "Dr. Robert Chen",
+      "reasonForVisit": "",
+      "status": "waiting",
+      "createdAt": "2026-07-18T15:05:35.007Z",
+      "isEmergency": false,
+      "priority": "Normal",
+      "position": 4,
+      "estimatedWaitTime": 0,
+      "expectedConsultationStartTime": "2026-07-18T15:05:35.008Z",
+      "lastNotifiedWaitTime": 0
+    }
+  ],
+  "settings": {
+    "isPaused": false,
+    "hospitalInfo": {
+      "name": "St. Jude Memorial Hospital",
+      "tagline": "Compassionate Care, Advanced Medicine",
+      "address": "742 Evergreen Terrace, Medical District, Sector 4",
+      "phone": "+1 (555) 010-9900",
+      "logoColor": "text-blue-600"
+    },
+    "announcements": [
+      {
+        "id": "ann-1",
+        "text": "Welcome to St. Jude Memorial Hospital. Please wait for your token to flash on the live queue TV display.",
+        "createdAt": "2026-07-17T08:00:00Z"
+      },
+      {
+        "id": "ann-2",
+        "text": "Note: Patients under emergency token designations will be expedited immediately to critical care units.",
+        "createdAt": "2026-07-17T08:05:00Z"
+      }
+    ]
+  },
+  "consultation_rooms": [
+    {
+      "id": "rm-1",
+      "roomNumber": "101",
+      "roomName": "Room 101 (Primary Care)",
+      "assignedDoctorId": "doc-1",
+      "departmentId": "dep-1",
+      "status": "available"
+    },
+    {
+      "id": "rm-2",
+      "roomNumber": "204",
+      "roomName": "Room 204 (Pediatrics)",
+      "assignedDoctorId": "doc-5",
+      "departmentId": "dep-2",
+      "status": "available"
+    },
+    {
+      "id": "rm-3",
+      "roomNumber": "302",
+      "roomName": "Room 302 (Cardiology)",
+      "assignedDoctorId": "doc-3",
+      "departmentId": "dep-3",
+      "status": "available"
+    }
+  ],
+  "queue_logs": [
+    {
+      "id": "log-1784387026548-u52n",
+      "tokenId": "tok-1784387026537",
+      "tokenNumber": "GEN-001",
+      "action": "created",
+      "timestamp": "2026-07-18T15:03:46.549Z"
+    },
+    {
+      "id": "log-1784387135008-pi9y",
+      "tokenId": "tok-1784387135007",
+      "tokenNumber": "GEN-002",
+      "action": "created",
+      "timestamp": "2026-07-18T15:05:35.008Z"
+    }
+  ],
+  "whatsapp_logs": [
+    {
+      "id": "wa-1784386853677-qorc",
+      "tokenId": "tok-3",
+      "tokenNumber": "CARD-001",
+      "patientName": "Michael Kaiser",
+      "patientMobile": "+1 (555) 088-1212",
+      "message": "🏥 Welcome to St. Jude Memorial Hospital\n\nHello Michael Kaiser\n\nYour Token:\nCARD-001\n\nDepartment:\nCardiology\n\nPatients Ahead:\n0\n\nEstimated Waiting Time:\n0 minutes\n\nExpected Consultation Time:\n08:00 AM\n\nTrack your queue here:\nhttps://ais-dev-zg25mxmzovs7xaiz4kn4e3-768588815559.asia-southeast1.run.app/?tracker=CARD-001",
+      "timestamp": "2026-07-18T15:00:53.677Z",
+      "type": "welcome"
+    },
+    {
+      "id": "wa-1784386853678-25ac",
+      "tokenId": "tok-4",
+      "tokenNumber": "ORTH-001",
+      "patientName": "Amara Okoye",
+      "patientMobile": "+1 (555) 033-4455",
+      "message": "🏥 Welcome to St. Jude Memorial Hospital\n\nHello Amara Okoye\n\nYour Token:\nORTH-001\n\nDepartment:\nOrthopedics\n\nPatients Ahead:\n0\n\nEstimated Waiting Time:\n0 minutes\n\nExpected Consultation Time:\n08:00 AM\n\nTrack your queue here:\nhttps://ais-dev-zg25mxmzovs7xaiz4kn4e3-768588815559.asia-southeast1.run.app/?tracker=ORTH-001",
+      "timestamp": "2026-07-18T15:00:53.678Z",
+      "type": "welcome"
+    },
+    {
+      "id": "wa-1784386853678-qo7e",
+      "tokenId": "tok-2",
+      "tokenNumber": "PEDS-001",
+      "patientName": "Sofia Rodriguez",
+      "patientMobile": "+1 (555) 099-3443",
+      "message": "It is now your turn.\n\nPlease proceed to Room G-12.",
+      "timestamp": "2026-07-18T15:00:53.678Z",
+      "type": "your_turn"
+    },
+    {
+      "id": "wa-1784387026591-d2hx",
+      "tokenId": "tok-1784387026537",
+      "tokenNumber": "GEN-001",
+      "patientName": "sudais",
+      "patientMobile": "123456789",
+      "message": "🏥 Welcome to St. Jude Memorial Hospital\n\nHello sudais\n\nYour Token:\nGEN-001\n\nDepartment:\nGeneral Medicine\n\nPatients Ahead:\n0\n\nEstimated Waiting Time:\n0 minutes\n\nExpected Consultation Time:\n08:03 AM\n\nTrack your queue here:\nhttps://ais-dev-zg25mxmzovs7xaiz4kn4e3-768588815559.asia-southeast1.run.app/?tracker=GEN-001",
+      "timestamp": "2026-07-18T15:03:46.591Z",
+      "type": "welcome"
+    },
+    {
+      "id": "wa-1784387135010-bv47",
+      "tokenId": "tok-1784387135007",
+      "tokenNumber": "GEN-002",
+      "patientName": "shiab",
+      "patientMobile": "123456781",
+      "message": "🏥 Welcome to St. Jude Memorial Hospital\n\nHello shiab\n\nYour Token:\nGEN-002\n\nDepartment:\nGeneral Medicine\n\nPatients Ahead:\n0\n\nEstimated Waiting Time:\n0 minutes\n\nExpected Consultation Time:\n08:05 AM\n\nTrack your queue here:\nhttps://ais-dev-zg25mxmzovs7xaiz4kn4e3-768588815559.asia-southeast1.run.app/?tracker=GEN-002",
+      "timestamp": "2026-07-18T15:05:35.010Z",
+      "type": "welcome"
+    }
+  ]
+}

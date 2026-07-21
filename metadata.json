@@ -1,0 +1,6 @@
+{
+  "name": "InclusyQ",
+  "description": "Hospital Queue Management & Smart Token System",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

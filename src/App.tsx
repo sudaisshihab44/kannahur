@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { 
   HeartPulse, ShieldAlert, MonitorPlay, Smartphone, LogOut, 
   RefreshCw, CheckCircle, Database, HelpCircle, ArrowRight, Sparkles, Search,
@@ -9,14 +9,27 @@ import {
   Department, Doctor, Token, QueueSettings, Patient, ReceptionUser, UserRole, TrackingDevice 
 } from './types';
 
-// Importing our modular sub-components
-import LoginScreen from './components/LoginScreen';
-import ReceptionDashboard from './components/ReceptionDashboard';
-import AdminDashboard from './components/AdminDashboard';
-import TVDisplay from './components/TVDisplay';
-import PatientTracker from './components/PatientTracker';
 import { Routes, Route } from 'react-router-dom';
-import TrackToken from './pages/TrackToken';
+
+// Lazy-loaded page-level components — each becomes its own JS chunk
+const LoginScreen      = lazy(() => import('./components/LoginScreen'));
+const ReceptionDashboard = lazy(() => import('./components/ReceptionDashboard'));
+const AdminDashboard   = lazy(() => import('./components/AdminDashboard'));
+const TVDisplay        = lazy(() => import('./components/TVDisplay'));
+const PatientTracker   = lazy(() => import('./components/PatientTracker'));
+const TrackToken       = lazy(() => import('./pages/TrackToken'));
+
+// Shared loading fallback
+function AppLoader() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#f8fafc]">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+        <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase">Loading...</span>
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   // Navigation / View state
@@ -168,48 +181,58 @@ export default function App() {
 
   if (window.location.pathname.includes('/track/')) {
     return (
-      <Routes>
-        <Route path="/track/:tokenId" element={<TrackToken />} />
-      </Routes>
+      <Suspense fallback={<AppLoader />}>
+        <Routes>
+          <Route path="/track/:tokenId" element={<TrackToken />} />
+        </Routes>
+      </Suspense>
     );
   }
 
   // Skip rendering standard headers if displaying fullscreen TV board or Patient mobile app
   if (activeView === 'tv' && settings) {
     return (
-      <TVDisplay 
-        tokens={tokens} 
-        settings={settings} 
-        doctors={doctors}
-        onBackToApp={() => {
-          if (currentUser) {
-            setActiveView(currentUser.role === UserRole.ADMIN ? 'admin' : 'reception');
-          } else {
-            setActiveView('login');
-          }
-        }} 
-      />
+      <Suspense fallback={<AppLoader />}>
+        <TVDisplay 
+          tokens={tokens} 
+          settings={settings} 
+          doctors={doctors}
+          onBackToApp={() => {
+            if (currentUser) {
+              setActiveView(currentUser.role === UserRole.ADMIN ? 'admin' : 'reception');
+            } else {
+              setActiveView('login');
+            }
+          }} 
+        />
+      </Suspense>
     );
   }
 
   if (activeView === 'tracking' && settings) {
     return (
-      <PatientTracker 
-        tokens={tokens} 
-        settings={settings} 
-        onBackToApp={() => {
-          if (currentUser) {
-            setActiveView(currentUser.role === UserRole.ADMIN ? 'admin' : 'reception');
-          } else {
-            setActiveView('login');
-          }
-        }}
-      />
+      <Suspense fallback={<AppLoader />}>
+        <PatientTracker 
+          tokens={tokens} 
+          settings={settings} 
+          onBackToApp={() => {
+            if (currentUser) {
+              setActiveView(currentUser.role === UserRole.ADMIN ? 'admin' : 'reception');
+            } else {
+              setActiveView('login');
+            }
+          }}
+        />
+      </Suspense>
     );
   }
 
   if (activeView === 'login') {
-    return <LoginScreen onLoginSuccess={handleLoginSuccess} users={users} />;
+    return (
+      <Suspense fallback={<AppLoader />}>
+        <LoginScreen onLoginSuccess={handleLoginSuccess} users={users} />
+      </Suspense>
+    );
   }
 
 
@@ -418,34 +441,40 @@ export default function App() {
 
         {/* Dynamic view workspace wrapper with customized scrolling */}
         <div className={`flex-1 overflow-y-auto ${activeView === 'admin' ? '' : 'p-8'}`}>
-          {activeView === 'reception' && settings && (
-            <ReceptionDashboard
-              departments={departments}
-              doctors={doctors}
-              tokens={tokens}
-              patients={patients}
-              settings={settings}
-              devices={devices}
-              onRefreshData={refreshDatabaseState}
-              onTogglePause={handleTogglePause}
-              currentUser={currentUser}
-            />
-          )}
+          <Suspense fallback={
+            <div className="flex items-center justify-center h-64">
+              <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+            </div>
+          }>
+            {activeView === 'reception' && settings && (
+              <ReceptionDashboard
+                departments={departments}
+                doctors={doctors}
+                tokens={tokens}
+                patients={patients}
+                settings={settings}
+                devices={devices}
+                onRefreshData={refreshDatabaseState}
+                onTogglePause={handleTogglePause}
+                currentUser={currentUser}
+              />
+            )}
 
-          {activeView === 'admin' && settings && (
-            <AdminDashboard
-              departments={departments}
-              doctors={doctors}
-              tokens={tokens}
-              users={users}
-              settings={settings}
-              onRefreshData={refreshDatabaseState}
-              activeTab={adminTab}
-              setActiveTab={setAdminTab}
-              currentUser={currentUser}
-              onLogout={handleLogout}
-            />
-          )}
+            {activeView === 'admin' && settings && (
+              <AdminDashboard
+                departments={departments}
+                doctors={doctors}
+                tokens={tokens}
+                users={users}
+                settings={settings}
+                onRefreshData={refreshDatabaseState}
+                activeTab={adminTab}
+                setActiveTab={setAdminTab}
+                currentUser={currentUser}
+                onLogout={handleLogout}
+              />
+            )}
+          </Suspense>
         </div>
 
         {/* Mini Footer */}

@@ -715,16 +715,18 @@ async function ensureDefaultCredentials() {
 // Main server
 // ============================================================
 
-async function startServer() {
-  await ensureDefaultCredentials();
+// Start background credentials verification asynchronously
+ensureDefaultCredentials().catch((err) => {
+  console.warn("[InclusyQ] Credentials initialization warning:", err?.message || err);
+});
 
-  const app = express();
-  const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
+const app = express();
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
-  // Helper: wraps async route handlers so any thrown error is forwarded
-  // to Express's error handler instead of causing a silent hang.
-  const wa = (fn: Function) => (req: any, res: any, next: any) =>
-    Promise.resolve(fn(req, res, next)).catch(next);
+// Helper: wraps async route handlers so any thrown error is forwarded
+// to Express's error handler instead of causing a silent hang.
+const wa = (fn: Function) => (req: any, res: any, next: any) =>
+  Promise.resolve(fn(req, res, next)).catch(next);
 
   app.use(express.json());
 
@@ -1850,34 +1852,41 @@ async function startServer() {
 
   // ------ Vite dev / static ------
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
+// ------ Vite dev / static ------
+
+if (process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1" && !process.env.VERCEL) {
+  createViteServer({
+    server: { middlewareMode: true },
+    appType: "spa",
+  }).then((vite) => {
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) =>
-      res.sendFile(path.join(distPath, "index.html"))
-    );
-  }
-
-  // ------ Global error handler (catches unhandled route errors) ------
-  app.use((err: any, req: any, res: any, next: any) => {
-    const status = err.status || 500;
-    const message = err.message || "Internal server error";
-    console.error(`[UNHANDLED ERROR] ${req.method} ${req.path}:`, err);
-    res.status(status).json({ success: false, message });
+  }).catch((err) => {
+    console.error("[Vite] Failed to start dev server middleware:", err);
   });
+} else if (process.env.VERCEL !== "1" && !process.env.VERCEL) {
+  // In production non-Vercel mode, serve the built dist/ statically
+  const distPath = path.join(process.cwd(), "dist");
+  app.use(express.static(distPath));
+  app.get("*", (req, res) =>
+    res.sendFile(path.join(distPath, "index.html"))
+  );
+}
 
-  app.listen(PORT, "0.0.0.0", () => {
+// ------ Global error handler (catches unhandled route errors) ------
+app.use((err: any, req: any, res: any, next: any) => {
+  const status = err.status || 500;
+  const message = err.message || "Internal server error";
+  console.error(`[UNHANDLED ERROR] ${req.method} ${req.path}:`, err);
+  res.status(status).json({ success: false, message });
+});
+
+export default app;
+
+// only listen when running locally, not on Vercel
+if (process.env.VERCEL !== "1" && !process.env.VERCEL) {
+  app.listen(PORT, () => {
     console.log(`[InclusyQ Server] Listening on http://0.0.0.0:${PORT}`);
     console.log(`[InclusyQ] Connected to Supabase: ${process.env.SUPABASE_URL}`);
   });
 }
 
-startServer().catch((err) => {
-  console.error("Failed to start server", err);
-});

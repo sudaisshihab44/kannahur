@@ -5,7 +5,12 @@
   "installCommand": "npm install",
   "framework": null,
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/api/admin/upload-logo", "destination": "/api/upload" },
+    { "source": "/api/admin/:path*",       "destination": "/api/admin" },
+    { "source": "/api/tokens/:path*",      "destination": "/api/tokens" },
+    { "source": "/api/tokens",             "destination": "/api/tokens" },
+    { "source": "/api/:path*",             "destination": "/api/index" },
+    { "source": "/((?!api/).*)",           "destination": "/index.html" }
   ],
   "headers": [
     {

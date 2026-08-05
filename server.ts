@@ -1,3 +1,14 @@
+/**
+ * server.ts — LOCAL DEVELOPMENT ONLY
+ *
+ * This file is used exclusively when running `npm run dev` locally.
+ * On Vercel, all traffic is handled by the individual serverless functions
+ * under /api/*.  This file is NOT deployed to Vercel.
+ *
+ * The Express app exported here is kept so that the local dev workflow
+ * (tsx server.ts → Vite middleware + Express on :3000) continues to work
+ * without any changes to the developer experience.
+ */
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";

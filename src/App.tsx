@@ -122,39 +122,10 @@ export default function App() {
     }
   }, []);
 
-  // SSE (Server-Sent Events) live updates subscription
-  useEffect(() => {
-    let eventSource: EventSource | null = null;
-    
-    const setupSSE = () => {
-      try {
-        eventSource = new EventSource('/api/events');
-        
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.type === "UPDATE") {
-              refreshDatabaseState();
-            }
-          } catch (e) {
-            console.error("SSE parse failure", e);
-          }
-        };
-
-        eventSource.onerror = () => {
-          if (eventSource) eventSource.close();
-          // Fail silently, fallback to our standard 3s polling
-        };
-      } catch (err) {
-        console.warn("SSE registration bypassed, falling back to secure active polling.");
-      }
-    };
-
-    setupSSE();
-    return () => {
-      if (eventSource) eventSource.close();
-    };
-  }, []);
+  // Live updates are handled entirely by the 3-second polling interval above.
+  // SSE was removed because Vercel Serverless Functions do not support
+  // long-lived persistent connections. Supabase Realtime is used by the
+  // TrackToken page for per-token live tracking.
 
   // Login successful handler
   const handleLoginSuccess = (user: ReceptionUser) => {

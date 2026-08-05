@@ -6,7 +6,8 @@
   "scripts": {
     "predev": "powershell -Command \"@(3000,24678) | ForEach-Object { $p=(netstat -ano | Select-String \\\":$_\\\" | Select-String 'LISTENING'); if($p){ $pid=($p -split '\\s+')[-1]; Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue; Write-Host \\\"Freed port $_\\\" } }\"",
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "vercel-build": "vite build",
+    "build": "vite build",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist db.json",
     "lint": "tsc --noEmit"
@@ -32,6 +33,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^22.14.0",
     "@types/nodemailer": "^8.0.1",
+    "@vercel/node": "^5.1.0",
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.25.0",
     "pg": "^8.22.0",

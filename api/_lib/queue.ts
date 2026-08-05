@@ -1,7 +1,9 @@
+// All imports at the top — required by TypeScript/ESM module rules
+import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { supabase } from "./supabase.js";
-import { mapToken } from "./mappers.js";
+import { mapToken, mapUser } from "./mappers.js";
 import type { Token } from "../../src/types.js";
-import { TokenStatus } from "../../src/types.js";
+import { TokenStatus, UserRole } from "../../src/types.js";
 
 // ── Audit / Queue Logs ───────────────────────────────────────────────────────
 
@@ -85,9 +87,15 @@ export async function computeWaitingQueue(departmentId?: string, doctorId?: stri
       patientsAhead: index,
       estimatedWaitMinutes,
       expectedConsultTime: expectedConsultTime.toISOString(),
-      expectedConsultDate: expectedConsultTime.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
-      expectedConsultTimeFormatted: expectedConsultTime.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true }),
-      registeredDate: new Date(token.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }),
+      expectedConsultDate: expectedConsultTime.toLocaleDateString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+      }),
+      expectedConsultTimeFormatted: expectedConsultTime.toLocaleTimeString("en-IN", {
+        hour: "2-digit", minute: "2-digit", hour12: true,
+      }),
+      registeredDate: new Date(token.created_at).toLocaleDateString("en-IN", {
+        day: "2-digit", month: "short", year: "numeric",
+      }),
     };
   });
 }
@@ -248,10 +256,6 @@ export async function notifyTwoAheadPatients(
 
 // ── Department-action authorization check ────────────────────────────────────
 
-import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { mapUser } from "./mappers.js";
-import { UserRole } from "../../src/types.js";
-
 export async function authorizeDeptAction(
   tokenId: string,
   req: VercelRequest,
@@ -260,16 +264,27 @@ export async function authorizeDeptAction(
   const operatorUsername = req.headers["x-operator-username"] as string;
   if (!operatorUsername) return true;
 
-  const { data: userRows } = await supabase.from("users").select("*").ilike("username", operatorUsername.trim());
+  const { data: userRows } = await supabase
+    .from("users")
+    .select("*")
+    .ilike("username", operatorUsername.trim());
   const operator = userRows?.[0] ? mapUser(userRows[0]) : null;
 
   if (operator && operator.role === UserRole.RECEPTIONIST) {
-    const { data: tokenRows } = await supabase.from("tokens").select("department_id").eq("id", tokenId);
+    const { data: tokenRows } = await supabase
+      .from("tokens")
+      .select("department_id")
+      .eq("id", tokenId);
     const tokenRow = tokenRows?.[0];
     if (tokenRow) {
-      const assignedDepts = operator.assignedDepartmentIds || (operator.departmentId ? [operator.departmentId] : []);
+      const assignedDepts =
+        operator.assignedDepartmentIds ||
+        (operator.departmentId ? [operator.departmentId] : []);
       if (!assignedDepts.includes(tokenRow.department_id)) {
-        res.status(403).json({ success: false, message: "You are not authorized to manage tokens for this department." });
+        res.status(403).json({
+          success: false,
+          message: "You are not authorized to manage tokens for this department.",
+        });
         return false;
       }
     }

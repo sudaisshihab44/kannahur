@@ -221,10 +221,8 @@ async function createTokenFallback(
     customMessage, operatorUsername,
   } = input;
 
-  const { insertToken, insertPatient: insertPatientFn } = await import(
-    '../repositories/tokenRepository.js'
-  );
-  const { findPatientByMobile } = await import('../repositories/userRepository.js');
+  const { insertToken } = await import('../repositories/tokenRepository.js');
+  const { insertPatient: insertPatientFn, findPatientByMobile } = await import('../repositories/userRepository.js');
 
   if (!(await findPatientByMobile(patientMobile.trim()))) {
     await insertPatientFn({

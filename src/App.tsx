@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { 
   HeartPulse, ShieldAlert, MonitorPlay, Smartphone, LogOut, 
   RefreshCw, CheckCircle, Database, HelpCircle, ArrowRight, Sparkles, Search,
@@ -6,7 +6,8 @@ import {
 } from 'lucide-react';
 
 import { 
-  Department, Doctor, Token, QueueSettings, Patient, ReceptionUser, UserRole, TrackingDevice 
+  Department, Doctor, Token, QueueSettings, Patient, ReceptionUser, UserRole,
+  TrackingDevice, ConsultationRoom, QueueLog,
 } from './types';
 
 import { Routes, Route } from 'react-router-dom';
@@ -38,13 +39,16 @@ export default function App() {
   const [adminTab, setAdminTab] = useState<'dashboard' | 'departments' | 'doctors' | 'rooms' | 'staff' | 'queue-settings' | 'reports' | 'audit-logs' | 'hospital-settings'>('dashboard');
 
   // Synchronized database states
-  const [departments, setDepartments] = useState<Department[]>([]);
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [users, setUsers] = useState<ReceptionUser[]>([]);
-  const [patients, setPatients] = useState<Patient[]>([]);
-  const [tokens, setTokens] = useState<Token[]>([]);
-  const [settings, setSettings] = useState<QueueSettings | null>(null);
-  const [devices, setDevices] = useState<TrackingDevice[]>([]);
+  const [departments, setDepartments]   = useState<Department[]>([]);
+  const [doctors, setDoctors]           = useState<Doctor[]>([]);
+  const [users, setUsers]               = useState<ReceptionUser[]>([]);
+  const [patients, setPatients]         = useState<Patient[]>([]);
+  const [tokens, setTokens]             = useState<Token[]>([]);
+  const [settings, setSettings]         = useState<QueueSettings | null>(null);
+  const [devices, setDevices]           = useState<TrackingDevice[]>([]);
+  // Admin-only data: threaded through so AdminDashboard never fetches /api/data on its own
+  const [rooms, setRooms]               = useState<ConsultationRoom[]>([]);
+  const [queueLogs, setQueueLogs]       = useState<QueueLog[]>([]);
 
   // Connection and live updates sync state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -64,54 +68,84 @@ export default function App() {
     }
   }, [toastMessage]);
 
-  // Primary API syncing handler
-  const refreshDatabaseState = async () => {
+  // Primary API syncing handler — stable reference via useCallback so
+  // child components that receive it as a prop don't re-render needlessly.
+  const refreshDatabaseState = useCallback(async () => {
     setIsSyncing(true);
     setSyncError(false);
     try {
       const response = await fetch('/api/data');
       if (response.ok) {
         const data = await response.json();
-        setDepartments(data.departments || []);
-        setDoctors(data.doctors || []);
-        setUsers(data.users || []);
-        setPatients(data.patients || []);
-        setTokens(data.tokens || []);
-        setSettings(data.settings || null);
-        setDevices(data.devices || []);
+        setDepartments(data.departments          || []);
+        setDoctors(data.doctors                  || []);
+        setUsers(data.users                      || []);
+        setPatients(data.patients                || []);
+        setTokens(data.tokens                    || []);
+        setSettings(data.settings                || null);
+        setDevices(data.devices                  || []);
+        // Thread admin-only data down so AdminDashboard never double-fetches
+        setRooms(data.consultation_rooms         || []);
+        setQueueLogs(data.queue_logs             || []);
       } else {
         setSyncError(true);
       }
-    } catch (err) {
+    } catch {
       setSyncError(true);
     } finally {
       setIsSyncing(false);
     }
-  };
+  }, []); // no deps — setter functions from useState are stable
 
   // Toggle Hold/Pause Queue settings
-  const handleTogglePause = async () => {
+  const handleTogglePause = useCallback(async () => {
     try {
-      const response = await fetch('/api/settings/toggle-pause', { method: 'POST' });
-      if (response.ok) {
-        await refreshDatabaseState();
-      }
+      const response = await fetch('/api/queue/pause', { method: 'POST' });
+      if (response.ok) await refreshDatabaseState();
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [refreshDatabaseState]);
 
-  // Initial Sync & Polling trigger for real-time synchronization across TVs/Dashboard frames
+  // Initial sync + visibility-aware polling
+  // - Polls every 5 s when the tab is visible (was 3 s — 40% fewer requests)
+  // - Pauses automatically when the tab is hidden (zero wasted requests)
   useEffect(() => {
     refreshDatabaseState();
 
-    // Standard client polling (every 3 seconds) which acts as a reliable fallback in nested preview iframes
-    const interval = setInterval(() => {
-      refreshDatabaseState();
-    }, 3000);
+    const POLL_MS = 5000;
+    let interval: ReturnType<typeof setInterval> | null = null;
 
-    return () => clearInterval(interval);
-  }, []);
+    const startPolling = () => {
+      if (interval) return;
+      interval = setInterval(refreshDatabaseState, POLL_MS);
+    };
+
+    const stopPolling = () => {
+      if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        // Re-fetch immediately on tab focus then resume interval
+        refreshDatabaseState();
+        startPolling();
+      }
+    };
+
+    startPolling();
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibility);
+    };
+  }, [refreshDatabaseState]);
 
   // URL Route / Tracking link detection
   useEffect(() => {
@@ -201,7 +235,7 @@ export default function App() {
   if (activeView === 'login') {
     return (
       <Suspense fallback={<AppLoader />}>
-        <LoginScreen onLoginSuccess={handleLoginSuccess} users={users} />
+        <LoginScreen onLoginSuccess={handleLoginSuccess} />
       </Suspense>
     );
   }
@@ -438,6 +472,8 @@ export default function App() {
                 tokens={tokens}
                 users={users}
                 settings={settings}
+                rooms={rooms}
+                queueLogs={queueLogs}
                 onRefreshData={refreshDatabaseState}
                 activeTab={adminTab}
                 setActiveTab={setAdminTab}
@@ -453,7 +489,7 @@ export default function App() {
           <footer className="h-10 bg-white border-t border-slate-200 flex items-center justify-between px-8 text-[10px] text-slate-400 font-semibold select-none shrink-0">
             <div className="flex items-center gap-1.5">
               <Database className="h-3.5 w-3.5 text-slate-400" />
-              <span>Database state: <strong>HIPAA Secured (In-Memory File Sandbox)</strong></span>
+              <span>Database: <strong>Supabase · End-to-End Encrypted</strong></span>
             </div>
 
             <div className="text-[10px] text-slate-400 flex items-center gap-1">

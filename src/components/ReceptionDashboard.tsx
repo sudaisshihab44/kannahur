@@ -1,23 +1,11 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { 
   Users, RefreshCw, PlusCircle, Search, Calendar, UserCheck, 
   AlertOctagon, CheckCircle2, ChevronRight, XCircle, BellRing, 
   Pause, Play, ShieldAlert, Heart, Smartphone, HelpCircle, UserPlus 
 } from 'lucide-react';
+import { getPriorityWeight } from '../utils/priority';
 import { Department, Doctor, Token, TokenStatus, Gender, QueueSettings, Patient, ReceptionUser, UserRole, TrackingDevice } from '../types';
-
-const getPriorityWeight = (priority: string | undefined): number => {
-  if (!priority) return 0;
-  switch (priority) {
-    case 'VIP': return 4;
-    case 'Person with Disability': return 3;
-    case 'Pregnant Woman': return 2;
-    case 'Senior Citizen': return 1;
-    case 'Normal':
-    default:
-      return 0;
-  }
-};
 
 interface ReceptionDashboardProps {
   departments: Department[];
@@ -31,7 +19,7 @@ interface ReceptionDashboardProps {
   currentUser?: ReceptionUser | null;
 }
 
-export default function ReceptionDashboard({
+export default memo(function ReceptionDashboard({
   departments,
   doctors,
   tokens,
@@ -48,26 +36,30 @@ export default function ReceptionDashboard({
     (currentUser.permissions && currentUser.permissions.includes('set_priority'))
   );
 
-  // Filter departments based on logged-in user's assignment
-  const allowedDepartments = departments.filter(dept => {
+  // ── Memoized filtered lists — only recompute when source arrays change ──
+  const allowedDepartments = useMemo(() => departments.filter(dept => {
     if (!currentUser || currentUser.role === UserRole.ADMIN) return true;
     const assignedIds = currentUser.assignedDepartmentIds || (currentUser.departmentId ? [currentUser.departmentId] : []);
     return assignedIds.includes(dept.id);
-  });
+  }), [departments, currentUser]);
 
-  // Filter doctors based on logged-in user's assigned departments
-  const allowedDoctors = doctors.filter(doc => {
+  const allowedDoctors = useMemo(() => doctors.filter(doc => {
     if (!currentUser || currentUser.role === UserRole.ADMIN) return true;
     const assignedIds = currentUser.assignedDepartmentIds || (currentUser.departmentId ? [currentUser.departmentId] : []);
     return assignedIds.includes(doc.departmentId);
-  });
+  }), [doctors, currentUser]);
 
-  // Filter tokens based on logged-in user's assigned departments
-  const allowedTokens = tokens.filter(t => {
-    if (!currentUser || currentUser.role === UserRole.ADMIN) return true;
+  const allowedTokens = useMemo(() => {
+    // Merge server tokens with optimistic tokens.
+    // If the server has already returned the optimistic token (same id), deduplicate.
+    const serverIds = new Set(tokens.map(t => t.id));
+    const pendingOptimistic = optimisticTokens.filter(t => !serverIds.has(t.id));
+    const combined = [...pendingOptimistic, ...tokens];
+
+    if (!currentUser || currentUser.role === UserRole.ADMIN) return combined;
     const assignedIds = currentUser.assignedDepartmentIds || (currentUser.departmentId ? [currentUser.departmentId] : []);
-    return assignedIds.includes(t.departmentId);
-  });
+    return combined.filter(t => assignedIds.includes(t.departmentId));
+  }, [tokens, optimisticTokens, currentUser]);
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -93,6 +85,29 @@ export default function ReceptionDashboard({
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
 
+  // ── Optimistic local token list (Task 7) ──────────────────────────────────
+  // When a token is successfully created we optimistically prepend it to the
+  // local list so the receptionist sees it instantly without waiting for the
+  // next polling cycle to return from the server.
+  const [optimisticTokens, setOptimisticTokens] = useState<Token[]>([]);
+
+  // ── Per-token action in-flight guard (Task 8) ─────────────────────────────
+  // Tracks which tokenIds have an in-flight action so the receptionist
+  // cannot double-click Call / Complete / Skip on the same token.
+  const [actionInFlight, setActionInFlight] = useState<Set<string>>(new Set());
+
+  const setTokenInFlight = useCallback((tokenId: string) => {
+    setActionInFlight(prev => new Set(prev).add(tokenId));
+  }, []);
+
+  const clearTokenInFlight = useCallback((tokenId: string) => {
+    setActionInFlight(prev => {
+      const next = new Set(prev);
+      next.delete(tokenId);
+      return next;
+    });
+  }, []);
+
   const handleUnassignDevice = async (deviceId: string) => {
     try {
       await fetch('/api/devices/unassign', {
@@ -115,44 +130,60 @@ export default function ReceptionDashboard({
     }
   }, [allowedDepartments]);
 
-  const getReceptionTokenStats = (token: Token) => {
-    if (token.status !== TokenStatus.WAITING) {
-      return { estimatedWait: 0, expectedStart: '', patientsAhead: 0 };
+  // ── Memoized per-token wait-time stats map ───────────────────────────────
+  // Pre-computes stats for ALL waiting tokens once per allowedTokens change
+  // instead of re-computing on every render inside the token list map.
+  const tokenStatsMap = useMemo(() => {
+    const map = new Map<string, { estimatedWait: number; expectedStart: string; patientsAhead: number }>();
+
+    // Group waiting tokens by doctor (one sort per doctor, not per token)
+    const byDoctor = new Map<string, Token[]>();
+    for (const t of allowedTokens) {
+      if (t.status !== TokenStatus.WAITING) continue;
+      const arr = byDoctor.get(t.doctorId) ?? [];
+      arr.push(t);
+      byDoctor.set(t.doctorId, arr);
     }
 
-    // Sort this doctor's waiting tokens: highest priority first, then FCFS
-    const doctorWaiting = tokens
-      .filter(t => t.doctorId === token.doctorId && t.status === TokenStatus.WAITING)
-      .sort((a, b) => {
-        const weightA = getPriorityWeight(a.priority);
-        const weightB = getPriorityWeight(b.priority);
-        if (weightA !== weightB) return weightB - weightA;
+    // Sort each doctor's queue once
+    byDoctor.forEach((docTokens, docId) => {
+      docTokens.sort((a, b) => {
+        const diff = getPriorityWeight(b.priority) - getPriorityWeight(a.priority);
+        if (diff !== 0) return diff;
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       });
 
-    const index = doctorWaiting.findIndex(t => t.id === token.id);
-    const patientsAhead = index === -1 ? 0 : index;
+      const doctorObj    = doctors.find(d => d.id === docId);
+      const defaultDur   = doctorObj?.avgConsultationTime || 15;
+      let accumulated    = 0;
 
-    // Cumulative sum of consultation durations of all patients AHEAD of this token
-    const doctorObj = doctors.find(d => d.id === token.doctorId);
-    const defaultDuration = doctorObj?.avgConsultationTime || 15;
-    
-    const estimatedWait = doctorWaiting
-      .slice(0, patientsAhead)
-      .reduce((sum, t) => sum + (t.estimatedConsultationTime || defaultDuration), 0);
+      docTokens.forEach((token, index) => {
+        const estimatedWait   = accumulated;
+        const consultDateTime = new Date(Date.now() + estimatedWait * 60000);
+        const expectedStart   =
+          consultDateTime.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) +
+          ' • ' +
+          consultDateTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-    const consultDateTime = new Date(Date.now() + estimatedWait * 60000);
-    const expectedDate = consultDateTime.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-    const expectedTime = consultDateTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
-    const expectedStart = `${expectedDate} • ${expectedTime}`;
+        map.set(token.id, { estimatedWait, expectedStart, patientsAhead: index });
+        accumulated += token.estimatedConsultationTime || defaultDur;
+      });
+    });
 
-    return { estimatedWait, expectedStart, patientsAhead };
-  };
+    return map;
+  }, [allowedTokens, doctors]);
 
-  // Filter doctors list based on selected department in form
-  const filteredDoctorsForForm = allowedDoctors.filter(
-    doc => (doc.status === 'active' || doc.status === 'available' || doc.status === 'busy') && (!selectedDeptId || doc.departmentId === selectedDeptId)
-  );
+  // Convenience accessor (keeps call-sites identical to the old function)
+  const getReceptionTokenStats = useCallback((token: Token) => {
+    if (token.status !== TokenStatus.WAITING) return { estimatedWait: 0, expectedStart: '', patientsAhead: 0 };
+    return tokenStatsMap.get(token.id) ?? { estimatedWait: 0, expectedStart: '', patientsAhead: 0 };
+  }, [tokenStatsMap]);
+
+  // ── Memoized form doctor list ─────────────────────────────────────────────
+  const filteredDoctorsForForm = useMemo(() => allowedDoctors.filter(
+    doc => (doc.status === 'active' || doc.status === 'available' || doc.status === 'busy') &&
+           (!selectedDeptId || doc.departmentId === selectedDeptId)
+  ), [allowedDoctors, selectedDeptId]);
 
   // Auto-fill form when a matching patient is found via phone query
   const handlePhoneLookup = () => {
@@ -186,7 +217,9 @@ export default function ReceptionDashboard({
       finalEstTime = parseInt(estConsultTime) || undefined;
     }
 
+    // ── Optimistic UI: disable the button immediately (Task 7) ────────────
     setIsRegistering(true);
+
     try {
       const response = await fetch('/api/tokens', {
         method: 'POST',
@@ -222,6 +255,11 @@ export default function ReceptionDashboard({
           }
         }
 
+        // ── Optimistic update: prepend real token to local list (Task 7) ──
+        // The server returned the real token — show it immediately in the
+        // queue list without waiting for the next polling cycle.
+        setOptimisticTokens(prev => [data.token, ...prev.filter(t => t.id !== data.token.id)]);
+
         setFormSuccess(`Token ${data.token.tokenNumber} created successfully!`);
         // Reset form
         setPatientName('');
@@ -233,20 +271,23 @@ export default function ReceptionDashboard({
         setEstConsultTime('');
         setCustomEstConsultTime('');
         setSelectedDeviceId('');
-        await onRefreshData();
+
+        // Trigger server refresh in background — do not await (non-blocking)
+        onRefreshData().catch(() => {});
       } else {
         setFormError(data.message || 'Failed to create token.');
       }
     } catch (err: any) {
-      console.error('Token creation error:', err);
       setFormError(`Connection failure. Could not contact the server. ${err?.message || ''}`.trim());
     } finally {
       setIsRegistering(false);
     }
   };
 
-  // Queue Operations Actions
+  // Queue Operations Actions — with per-token duplicate-click guard (Task 8)
   const handleCallToken = async (tokenId: string) => {
+    if (actionInFlight.has(tokenId)) return;       // ← guard: reject double-click
+    setTokenInFlight(tokenId);
     try {
       const res = await fetch(`/api/tokens/${tokenId}/call`, { 
         method: 'POST',
@@ -256,15 +297,18 @@ export default function ReceptionDashboard({
       if (!res.ok) {
         setFormError(data.message || 'Failed to call token.');
       } else {
-        await onRefreshData();
+        onRefreshData().catch(() => {});
       }
     } catch (err: any) {
       setFormError(`Server error: ${err?.message || 'Could not call token.'}`);
-      console.error('Failed to call token:', err);
+    } finally {
+      clearTokenInFlight(tokenId);
     }
   };
 
   const handleCompleteToken = async (tokenId: string) => {
+    if (actionInFlight.has(tokenId)) return;
+    setTokenInFlight(tokenId);
     try {
       const res = await fetch(`/api/tokens/${tokenId}/complete`, { 
         method: 'POST',
@@ -274,15 +318,18 @@ export default function ReceptionDashboard({
       if (!res.ok) {
         setFormError(data.message || 'Failed to complete token.');
       } else {
-        await onRefreshData();
+        onRefreshData().catch(() => {});
       }
     } catch (err: any) {
       setFormError(`Server error: ${err?.message || 'Could not complete token.'}`);
-      console.error('Failed to complete token:', err);
+    } finally {
+      clearTokenInFlight(tokenId);
     }
   };
 
   const handleSkipToken = async (tokenId: string) => {
+    if (actionInFlight.has(tokenId)) return;
+    setTokenInFlight(tokenId);
     try {
       const res = await fetch(`/api/tokens/${tokenId}/skip`, { 
         method: 'POST',
@@ -292,15 +339,18 @@ export default function ReceptionDashboard({
       if (!res.ok) {
         setFormError(data.message || 'Failed to skip token.');
       } else {
-        await onRefreshData();
+        onRefreshData().catch(() => {});
       }
     } catch (err: any) {
       setFormError(`Server error: ${err?.message || 'Could not skip token.'}`);
-      console.error('Failed to skip token:', err);
+    } finally {
+      clearTokenInFlight(tokenId);
     }
   };
 
   const handleCancelToken = async (tokenId: string) => {
+    if (actionInFlight.has(tokenId)) return;
+    setTokenInFlight(tokenId);
     try {
       const res = await fetch(`/api/tokens/${tokenId}/cancel`, { 
         method: 'POST',
@@ -310,28 +360,32 @@ export default function ReceptionDashboard({
       if (!res.ok) {
         setFormError(data.message || 'Failed to cancel token.');
       } else {
-        await onRefreshData();
+        onRefreshData().catch(() => {});
       }
     } catch (err: any) {
       setFormError(`Server error: ${err?.message || 'Could not cancel token.'}`);
-      console.error('Failed to cancel token:', err);
+    } finally {
+      clearTokenInFlight(tokenId);
     }
   };
 
   const handleRecallToken = async (tokenId: string) => {
+    if (actionInFlight.has(tokenId)) return;
+    setTokenInFlight(tokenId);
     try {
       const res = await fetch(`/api/tokens/${tokenId}/recall`, { 
         method: 'POST',
-        headers: {
-          'X-Operator-Username': currentUser?.username || ''
-        }
+        headers: { 'X-Operator-Username': currentUser?.username || '' }
       });
       if (res.ok) {
         setFormSuccess(`Recalled token successfully! Alert broadcasted to TV display.`);
         setTimeout(() => setFormSuccess(null), 3000);
+        onRefreshData().catch(() => {});
       }
     } catch (err) {
-      console.error("Failed to recall token:", err);
+      // silent — recall is non-critical
+    } finally {
+      clearTokenInFlight(tokenId);
     }
   };
 
@@ -359,53 +413,44 @@ export default function ReceptionDashboard({
     await handleCallToken(nextToken.id);
   };
 
-  // Get current active called token (if any)
-  const activeCalledToken = allowedTokens
-    .filter(t => t.status === TokenStatus.CALLED)
-    .sort((a, b) => new Date(b.calledAt || '').getTime() - new Date(a.calledAt || '').getTime())[0] || null;
+  // ── Memoized derived values — only recompute when allowedTokens or filters change
+  const activeCalledToken = useMemo(() =>
+    allowedTokens
+      .filter(t => t.status === TokenStatus.CALLED)
+      .sort((a, b) => new Date(b.calledAt || '').getTime() - new Date(a.calledAt || '').getTime())[0] || null,
+    [allowedTokens]);
 
-  // Counters for state headers
-  const waitingCount = allowedTokens.filter(t => t.status === TokenStatus.WAITING).length;
-  const emergencyCount = allowedTokens.filter(t => t.status === TokenStatus.WAITING && t.priority && t.priority !== 'Normal').length;
-  const completedCount = allowedTokens.filter(t => t.status === TokenStatus.COMPLETED).length;
+  const waitingCount   = useMemo(() => allowedTokens.filter(t => t.status === TokenStatus.WAITING).length, [allowedTokens]);
+  const emergencyCount = useMemo(() => allowedTokens.filter(t => t.status === TokenStatus.WAITING && t.priority && t.priority !== 'Normal').length, [allowedTokens]);
+  const completedCount = useMemo(() => allowedTokens.filter(t => t.status === TokenStatus.COMPLETED).length, [allowedTokens]);
 
-  // Filtered List of tokens to showcase in the list
-  const filteredTokensForList = allowedTokens.filter(t => {
-    const matchesSearch = 
-      t.tokenNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      t.patientMobile.includes(searchTerm);
-    
-    const matchesDept = !selectedDeptFilter || t.departmentId === selectedDeptFilter;
-    const matchesDoc = !selectedDocFilter || t.doctorId === selectedDocFilter;
+  const sortedTokensForList = useMemo(() => {
+    const filtered = allowedTokens.filter(t => {
+      const lo = searchTerm.toLowerCase();
+      const matchesSearch =
+        t.tokenNumber.toLowerCase().includes(lo) ||
+        t.patientName.toLowerCase().includes(lo) ||
+        t.patientMobile.includes(searchTerm);
+      const matchesDept = !selectedDeptFilter || t.departmentId === selectedDeptFilter;
+      const matchesDoc  = !selectedDocFilter  || t.doctorId     === selectedDocFilter;
+      return matchesSearch && matchesDept && matchesDoc;
+    });
 
-    return matchesSearch && matchesDept && matchesDoc;
-  });
-
-  // Sort queue lists: Active on top, then waiting (FCFS with priority), then finished
-  const sortedTokensForList = [...filteredTokensForList].sort((a, b) => {
-    const statusPriority: Record<string, number> = {
-      [TokenStatus.CALLED]: 1,
-      [TokenStatus.WAITING]: 2,
-      [TokenStatus.COMPLETED]: 3,
-      [TokenStatus.SKIPPED]: 4,
-      [TokenStatus.CANCELLED]: 5,
+    const STATUS_RANK: Record<string, number> = {
+      [TokenStatus.CALLED]: 1, [TokenStatus.WAITING]: 2,
+      [TokenStatus.COMPLETED]: 3, [TokenStatus.SKIPPED]: 4, [TokenStatus.CANCELLED]: 5,
     };
 
-    if (statusPriority[a.status] !== statusPriority[b.status]) {
-      return statusPriority[a.status] - statusPriority[b.status];
-    }
-
-    // Within waiting: higher priority first, then oldest-first (FCFS)
-    if (a.status === TokenStatus.WAITING && b.status === TokenStatus.WAITING) {
-      const weightA = getPriorityWeight(a.priority);
-      const weightB = getPriorityWeight(b.priority);
-      if (weightA !== weightB) return weightB - weightA;
-    }
-
-    // Bug 1 fix: ascending by createdAt so oldest token (first-come) is at top
-    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-  });
+    return filtered.sort((a, b) => {
+      const rankDiff = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+      if (rankDiff !== 0) return rankDiff;
+      if (a.status === TokenStatus.WAITING) {
+        const weightDiff = getPriorityWeight(b.priority) - getPriorityWeight(a.priority);
+        if (weightDiff !== 0) return weightDiff;
+      }
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+  }, [allowedTokens, searchTerm, selectedDeptFilter, selectedDocFilter]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -905,25 +950,28 @@ export default function ReceptionDashboard({
                       {token.reasonForVisit ? `"${token.reasonForVisit}"` : 'No diagnosis recorded'}
                     </span>
 
-                    {/* Operational Triggers */}
+                    {/* Operational Triggers — disabled when this token has an action in-flight */}
                     <div className="flex gap-1.5">
                       {token.status === TokenStatus.WAITING && (
                         <>
                           <button
                             onClick={() => handleCallToken(token.id)}
-                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-colors flex items-center gap-0.5"
+                            disabled={actionInFlight.has(token.id)}
+                            className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg transition-colors flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Call
+                            {actionInFlight.has(token.id) ? '...' : 'Call'}
                           </button>
                           <button
                             onClick={() => handleSkipToken(token.id)}
-                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-[10px] rounded-lg transition-colors"
+                            disabled={actionInFlight.has(token.id)}
+                            className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-[10px] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                             Skip
                           </button>
                           <button
                             onClick={() => handleCancelToken(token.id)}
-                            className="px-2 py-1 text-slate-400 hover:text-red-600 transition-colors"
+                            disabled={actionInFlight.has(token.id)}
+                            className="px-2 py-1 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Cancel Token"
                           >
                             <XCircle className="h-4.5 w-4.5" />
@@ -935,20 +983,23 @@ export default function ReceptionDashboard({
                         <>
                           <button
                             onClick={() => handleCompleteToken(token.id)}
-                            className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px] rounded-lg transition-colors flex items-center gap-0.5"
+                            disabled={actionInFlight.has(token.id)}
+                            className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white font-bold text-[10px] rounded-lg transition-colors flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                           >
-                            Complete
+                            {actionInFlight.has(token.id) ? '...' : 'Complete'}
                           </button>
                           <button
                             onClick={() => handleRecallToken(token.id)}
-                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg transition-colors flex items-center gap-0.5"
+                            disabled={actionInFlight.has(token.id)}
+                            className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] rounded-lg transition-colors flex items-center gap-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Flash again on TV Display"
                           >
                             Recall
                           </button>
                           <button
                             onClick={() => handleCancelToken(token.id)}
-                            className="px-2 py-1 text-slate-400 hover:text-red-600 transition-colors"
+                            disabled={actionInFlight.has(token.id)}
+                            className="px-2 py-1 text-slate-400 hover:text-red-600 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                             title="Cancel Token"
                           >
                             <XCircle className="h-4.5 w-4.5" />
@@ -959,9 +1010,10 @@ export default function ReceptionDashboard({
                       {(token.status === TokenStatus.SKIPPED || token.status === TokenStatus.CANCELLED) && (
                         <button
                           onClick={() => handleCallToken(token.id)}
-                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-[10px] rounded-lg transition-colors"
+                          disabled={actionInFlight.has(token.id)}
+                          className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 font-bold text-[10px] rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                          Recall Patient
+                          {actionInFlight.has(token.id) ? '...' : 'Recall Patient'}
                         </button>
                       )}
                     </div>
@@ -978,4 +1030,4 @@ export default function ReceptionDashboard({
       </div>
     </div>
   );
-}
+});

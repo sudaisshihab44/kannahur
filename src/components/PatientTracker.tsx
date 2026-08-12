@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, memo } from 'react';
 import { Search, HeartPulse, Clock, Users, ChevronRight, RefreshCw, Smartphone, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
 import { Token, TokenStatus, QueueSettings } from '../types';
+import { getPriorityWeight } from '../utils/priority';
 
 interface PatientTrackerProps {
   tokens: Token[];
@@ -8,20 +9,7 @@ interface PatientTrackerProps {
   onBackToApp?: () => void;
 }
 
-const getPriorityWeight = (priority: string | undefined): number => {
-  if (!priority) return 0;
-  switch (priority) {
-    case 'VIP': return 4;
-    case 'Person with Disability': return 3;
-    case 'Pregnant Woman': return 2;
-    case 'Senior Citizen': return 1;
-    case 'Normal':
-    default:
-      return 0;
-  }
-};
-
-export default function PatientTracker({ tokens, settings, onBackToApp }: PatientTrackerProps) {
+export default memo(function PatientTracker({ tokens, settings, onBackToApp }: PatientTrackerProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedToken, setSelectedToken] = useState<Token | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -60,7 +48,7 @@ export default function PatientTracker({ tokens, settings, onBackToApp }: Patien
     }
   }, [tokens]);
 
-  const fetchTrackData = async (id: string) => {
+  const fetchTrackData = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/track/${id}`);
       if (res.ok) {
@@ -105,22 +93,18 @@ export default function PatientTracker({ tokens, settings, onBackToApp }: Patien
       } else {
         setErrorMsg('Failed to retrieve queue tracking information.');
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
       setErrorMsg('Network error. Unable to contact queue tracker.');
     }
-  };
+  }, []);
 
+  // Fetch once when trackedTokenId is set/changed.
+  // The parent App.tsx already polls /api/data every 5 s and passes fresh
+  // `tokens` props down, so we don't need a second polling interval here.
   useEffect(() => {
     if (!trackedTokenId) return;
-
     fetchTrackData(trackedTokenId);
-    const interval = setInterval(() => {
-      fetchTrackData(trackedTokenId);
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [trackedTokenId]);
+  }, [trackedTokenId, fetchTrackData]);
 
   // Auto look up first waiting token if none is selected and no active tracker URL
   useEffect(() => {
@@ -527,4 +511,4 @@ export default function PatientTracker({ tokens, settings, onBackToApp }: Patien
       )}
     </div>
   );
-}
+});

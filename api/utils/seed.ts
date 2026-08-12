@@ -1,8 +1,14 @@
-import { supabase } from "./supabase.js";
+/**
+ * api/utils/seed.ts
+ *
+ * Database seeding utility — ensures default settings, admin/reception users, and tracking devices.
+ * Moved from api/_lib/seed.ts during enterprise refactor.
+ */
+import { supabase } from "../config/supabase.js";
 
 /**
  * Verifies default settings, admin, reception, and tracking device seeds.
- * Called once per cold start from api/data.ts.
+ * Called once per cold start from api/index.ts data endpoint.
  */
 export async function ensureDefaultCredentials() {
   try {

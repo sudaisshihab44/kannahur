@@ -1,0 +1,56 @@
+# Dependencies — reinstalled inside the image
+node_modules/
+
+# Build output — rebuilt inside the image
+dist/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Environment files — NEVER bake secrets into images
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Tests / scratch
+scratch/
+*.test.ts
+*.spec.ts
+coverage/
+
+# Documentation (not needed at runtime)
+*.md
+!README.md
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Vercel
+.vercel/
+
+# Database files
+db.json
+*.sql
+
+# CI/CD
+.github/
+
+# Docker itself
+Dockerfile*
+docker-compose*

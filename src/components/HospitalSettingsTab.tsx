@@ -322,7 +322,7 @@ export default function HospitalSettingsTab({
                 {/* Logo Preview Container */}
                 <div className="w-16 h-16 bg-white rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden shrink-0 select-none">
                   {(logoPreviewUrl || formData.logoUrl) ? (
-                    <img src={logoPreviewUrl || formData.logoUrl} alt="Hospital Logo" className="w-full h-full object-contain" />
+                    <img src={logoPreviewUrl || formData.logoUrl} alt="Hospital Logo" loading="lazy" decoding="async" className="w-full h-full object-contain" />
                   ) : (
                     <div className="flex flex-col items-center justify-center text-slate-300">
                       <Building className="h-7 w-7" />

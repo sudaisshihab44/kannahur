@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { Volume2, VolumeX, Maximize2, Minimize2, HeartPulse, Sparkles, ArrowRight, Bell, Tv } from 'lucide-react';
 import { Token, TokenStatus, QueueSettings, Doctor } from '../types';
+import { getPriorityWeight } from '../utils/priority';
 
 interface TVDisplayProps {
   tokens: Token[];
@@ -9,45 +10,31 @@ interface TVDisplayProps {
   onBackToApp?: () => void;
 }
 
-const getPriorityWeight = (priority: string | undefined): number => {
-  if (!priority) return 0;
-  switch (priority) {
-    case 'VIP': return 4;
-    case 'Person with Disability': return 3;
-    case 'Pregnant Woman': return 2;
-    case 'Senior Citizen': return 1;
-    case 'Normal':
-    default:
-      return 0;
-  }
-};
-
-export default function TVDisplay({ tokens, settings, doctors = [], onBackToApp }: TVDisplayProps) {
+export default memo(function TVDisplay({ tokens, settings, doctors = [], onBackToApp }: TVDisplayProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isAudioEnabled, setIsAudioEnabled] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastCalledIdRef = useRef<string | null>(null);
 
-  // Active called tokens, sorted by most recently called
-  const calledTokens = tokens
-    .filter(t => t.status === TokenStatus.CALLED)
-    .sort((a, b) => new Date(b.calledAt || "").getTime() - new Date(a.calledAt || "").getTime());
+  // ── Memoized derived arrays — avoids re-sorting on every render ──────────
+  const calledTokens = useMemo(() =>
+    tokens
+      .filter(t => t.status === TokenStatus.CALLED)
+      .sort((a, b) => new Date(b.calledAt || '').getTime() - new Date(a.calledAt || '').getTime()),
+    [tokens]);
 
   const currentActive = calledTokens[0] || null;
-  const otherCalled = calledTokens.slice(1, 4);
+  const otherCalled   = calledTokens.slice(1, 4);
 
-  // Upcoming waiting list (next 5 tokens)
-  const upNextTokens = tokens
-    .filter(t => t.status === TokenStatus.WAITING)
-    .sort((a, b) => {
-      const weightA = getPriorityWeight(a.priority);
-      const weightB = getPriorityWeight(b.priority);
-      if (weightA !== weightB) {
-        return weightB - weightA;
-      }
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    })
-    .slice(0, 5);
+  const upNextTokens = useMemo(() =>
+    tokens
+      .filter(t => t.status === TokenStatus.WAITING)
+      .sort((a, b) => {
+        const diff = getPriorityWeight(b.priority) - getPriorityWeight(a.priority);
+        return diff !== 0 ? diff : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      })
+      .slice(0, 5),
+    [tokens]);
 
   // Speech synthesis for voice calls when current active token changes
   useEffect(() => {
@@ -129,6 +116,10 @@ export default function TVDisplay({ tokens, settings, doctors = [], onBackToApp 
               src={settings.hospitalInfo.logoUrl} 
               alt="Hospital Logo" 
               referrerPolicy="no-referrer"
+              loading="lazy"
+              decoding="async"
+              width={56}
+              height={56}
               className="w-14 h-14 object-contain rounded-xl bg-white p-1 shadow-md"
             />
           ) : (
@@ -380,19 +371,7 @@ export default function TVDisplay({ tokens, settings, doctors = [], onBackToApp 
         </div>
       </footer>
 
-      {/* Inline styles for custom infinite marquee scroll animation */}
-      <style>{`
-        @keyframes marquee {
-          0% { transform: translateX(0%); }
-          100% { transform: translateX(-50%); }
-        }
-        .animate-marquee {
-          animation: marquee 35s linear infinite;
-        }
-        .animate-marquee:hover {
-          animation-play-state: paused;
-        }
-      `}</style>
+      {/* Marquee animation is defined in src/index.css — no inline style needed */}
     </div>
   );
-}
+});

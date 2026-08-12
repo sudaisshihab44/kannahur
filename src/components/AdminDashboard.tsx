@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, memo } from 'react';
 import { 
   Building, Users, Stethoscope, Sliders, Settings, 
   DoorOpen, Activity, FileText, BarChart2, ShieldAlert, LogOut
@@ -22,6 +22,9 @@ interface AdminDashboardProps {
   tokens: Token[];
   users: ReceptionUser[];
   settings: QueueSettings;
+  /** Passed from App.tsx so this component never double-fetches /api/data */
+  rooms: ConsultationRoom[];
+  queueLogs: QueueLog[];
   onRefreshData: () => Promise<void>;
   currentUser?: ReceptionUser | null;
   activeTab?: 'dashboard' | 'departments' | 'doctors' | 'rooms' | 'staff' | 'queue-settings' | 'reports' | 'audit-logs' | 'hospital-settings';
@@ -29,12 +32,14 @@ interface AdminDashboardProps {
   onLogout?: () => void;
 }
 
-export default function AdminDashboard({ 
+export default memo(function AdminDashboard({ 
   departments, 
   doctors, 
   tokens, 
   users,
   settings, 
+  rooms,
+  queueLogs,
   onRefreshData,
   currentUser,
   activeTab: controlledTab,
@@ -46,34 +51,14 @@ export default function AdminDashboard({
     'dashboard' | 'departments' | 'doctors' | 'rooms' | 'staff' | 'queue-settings' | 'reports' | 'audit-logs' | 'hospital-settings'
   >('dashboard');
 
-  const activeTab = controlledTab || internalTab;
+  const activeTab    = controlledTab          || internalTab;
   const setActiveTab = controlledSetActiveTab || setInternalTab;
 
-  const [localRooms, setLocalRooms] = useState<ConsultationRoom[]>([]);
-  const [localLogs, setLocalLogs] = useState<QueueLog[]>([]);
-
-  // Local fetch for additional consultation rooms and logs
-  const fetchRoomsAndLogs = async () => {
-    try {
-      const res = await fetch('/api/data');
-      if (res.ok) {
-        const data = await res.json();
-        setLocalRooms(data.consultation_rooms || []);
-        setLocalLogs(data.queue_logs || []);
-      }
-    } catch (err) {
-      console.warn("Failed fetching metadata rooms and logs", err);
-    }
-  };
-
-  useEffect(() => {
-    fetchRoomsAndLogs();
-  }, [tokens, departments, doctors, users, settings, activeTab]);
-
-  const handleTabChange = (tab: typeof activeTab) => {
+  // Stable tab change handler — no extra fetches needed since
+  // rooms and queueLogs are now passed down from App's polling state.
+  const handleTabChange = useCallback((tab: typeof activeTab) => {
     setActiveTab(tab);
-    fetchRoomsAndLogs();
-  };
+  }, [setActiveTab]);
 
   const renderContent = () => {
     switch (activeTab) {
@@ -107,7 +92,7 @@ export default function AdminDashboard({
       case 'rooms':
         return (
           <RoomsTab 
-            rooms={localRooms}
+            rooms={rooms}
             doctors={doctors}
             departments={departments}
             onRefreshData={onRefreshData}
@@ -140,7 +125,7 @@ export default function AdminDashboard({
       case 'audit-logs':
         return (
           <AuditLogsTab 
-            logs={localLogs}
+            logs={queueLogs}
             tokens={tokens}
             departments={departments}
             users={users}
@@ -252,4 +237,4 @@ export default function AdminDashboard({
       </main>
     </div>
   );
-}
+});

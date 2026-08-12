@@ -1,9 +1,9 @@
 {
-  "version": 2,
   "buildCommand": "vite build",
   "outputDirectory": "dist",
-  "installCommand": "npm install",
+  "installCommand": "npm ci --frozen-lockfile",
   "framework": null,
+
   "rewrites": [
     { "source": "/api/admin/upload-logo", "destination": "/api/upload" },
     { "source": "/api/admin/:path*",       "destination": "/api/admin" },
@@ -12,14 +12,39 @@
     { "source": "/api/:path*",             "destination": "/api/index" },
     { "source": "/((?!api/).*)",           "destination": "/index.html" }
   ],
+
   "headers": [
     {
       "source": "/api/(.*)",
       "headers": [
-        { "key": "Access-Control-Allow-Origin",  "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET,POST,PUT,DELETE,OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type,Authorization,x-operator-username" }
+        { "key": "X-Content-Type-Options",  "value": "nosniff" },
+        { "key": "X-Frame-Options",          "value": "DENY" },
+        { "key": "Referrer-Policy",          "value": "strict-origin-when-cross-origin" }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options",         "value": "DENY" },
+        { "key": "Referrer-Policy",         "value": "strict-origin-when-cross-origin" },
+        { "key": "Permissions-Policy",      "value": "camera=(), microphone=(), geolocation=()" }
       ]
     }
-  ]
+  ],
+
+  "functions": {
+    "api/index.ts":  { "maxDuration": 30 },
+    "api/admin.ts":  { "maxDuration": 30 },
+    "api/tokens.ts": { "maxDuration": 30 },
+    "api/upload.ts": { "maxDuration": 60, "memory": 512 }
+  },
+
+  "crons": []
 }

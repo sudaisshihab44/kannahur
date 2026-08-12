@@ -26,6 +26,11 @@ dotenv.config({ path: ".env.local" });
 
 import { supabase } from "./src/lib/supabaseServer.js";
 
+// ── Monitoring bootstrap ──────────────────────────────────────────────────────
+// Must happen before any request is served so Sentry catches startup errors.
+import { initSentry } from './api/monitoring/sentry.js';
+initSentry();
+
 // ============================================================
 // Row Mappers  (DB snake_case → TypeScript camelCase)
 // ============================================================
@@ -731,6 +736,23 @@ ensureDefaultCredentials().catch((err) => {
   console.warn("[InclusyQ] Credentials initialization warning:", err?.message || err);
 });
 
+// ── BullMQ workers ────────────────────────────────────────────────────────────
+// Workers are started after env is loaded (dotenv.config runs above).
+// They are no-ops when REDIS_URL is not set — jobs fall back to in-process.
+import { startWorkers } from './api/jobs/scheduler.js';
+import { expressRequestLogger } from './api/middleware/requestLogger.js';
+import {
+  healthHandler, readyHandler, liveHandler, metricsHandler,
+} from './api/controllers/healthController.js';
+
+let stopWorkers: (() => Promise<void>) | null = null;
+
+startWorkers()
+  .then((stop) => { stopWorkers = stop; })
+  .catch((err) => {
+    console.warn('[InclusyQ] BullMQ worker startup warning:', err?.message || err);
+  });
+
 const app = express();
 const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 
@@ -741,21 +763,14 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
 
   app.use(express.json());
 
-  // ------ Dev-mode request logger ------
-  if (process.env.NODE_ENV !== "production") {
-    app.use((req, res, next) => {
-      const start = Date.now();
-      res.on("finish", () => {
-        const ms = Date.now() - start;
-        const level = res.statusCode >= 400 ? "ERROR" : "INFO";
-        console.log(`[${level}] ${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`);
-        if (res.statusCode >= 400 && req.body && Object.keys(req.body).length) {
-          console.log(`  Body: ${JSON.stringify(req.body)}`);
-        }
-      });
-      next();
-    });
-  }
+  // ── Structured request logger (replaces plain console.log middleware) ──────
+  app.use(expressRequestLogger);
+
+  // ── Monitoring endpoints (no auth — probes must always be reachable) ───────
+  app.get('/api/health',  (req, res) => healthHandler(req as any, res as any));
+  app.get('/api/ready',   (req, res) => readyHandler(req as any, res as any));
+  app.get('/api/live',    (req, res) => liveHandler(req as any, res as any));
+  app.get('/api/metrics', (req, res) => metricsHandler(req as any, res as any));
 
   // ------ SSE ------
   app.get("/api/events", (req, res) => {
@@ -1885,10 +1900,12 @@ if (process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1" && !proc
 
 // ------ Global error handler (catches unhandled route errors) ------
 app.use((err: any, req: any, res: any, next: any) => {
-  const status = err.status || 500;
+  const { generateErrorId } = require('./api/config/logger.js');
+  const errorId = generateErrorId();
+  const status  = err.status || 500;
   const message = err.message || "Internal server error";
-  console.error(`[UNHANDLED ERROR] ${req.method} ${req.path}:`, err);
-  res.status(status).json({ success: false, message });
+  console.error(`[UNHANDLED ERROR] errorId=${errorId} ${req.method} ${req.path}:`, err);
+  res.status(status).json({ success: false, message, errorId });
 });
 
 export default app;
@@ -1899,5 +1916,15 @@ if (process.env.VERCEL !== "1" && !process.env.VERCEL) {
     console.log(`[InclusyQ Server] Listening on http://0.0.0.0:${PORT}`);
     console.log(`[InclusyQ] Connected to Supabase: ${process.env.SUPABASE_URL}`);
   });
+
+  // Graceful shutdown: flush BullMQ workers before the process exits
+  const shutdown = async (signal: string) => {
+    console.log(`\n[InclusyQ] ${signal} received — shutting down gracefully…`);
+    if (stopWorkers) await stopWorkers();
+    process.exit(0);
+  };
+
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT',  () => shutdown('SIGINT'));
 }
 

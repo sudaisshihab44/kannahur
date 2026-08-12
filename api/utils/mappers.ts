@@ -1,8 +1,14 @@
+/**
+ * api/utils/mappers.ts
+ *
+ * Database row → TypeScript type mappers.
+ * Moved from api/_lib/mappers.ts during enterprise refactor.
+ */
 import type {
   Department, Doctor, Patient, Token, ConsultationRoom,
   ReceptionUser, QueueLog, TrackingDevice, QueueSettings,
-} from "../../src/types.js";
-import { TokenStatus, Gender, UserRole, DeviceStatus } from "../../src/types.js";
+} from "../../src/types/index.js";
+import { TokenStatus, Gender, UserRole, DeviceStatus } from "../../src/types/index.js";
 
 export function mapDept(r: any): Department {
   return {

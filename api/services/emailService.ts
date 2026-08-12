@@ -1,14 +1,24 @@
-import nodemailer from "nodemailer";
-import { supabase } from "./supabase.js";
+/**
+ * api/services/emailService.ts
+ *
+ * Email notification service using Nodemailer + Gmail SMTP.
+ * Logs every send to whatsapp_logs for audit trail.
+ */
+import nodemailer from 'nodemailer';
+import { insertNotificationLog } from '../repositories/settingsRepository.js';
 
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  service: 'gmail',
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
 });
 
+/**
+ * Send an email to a patient with queue tracking link.
+ * Logs send attempt to notification logs.
+ */
 export async function sendEmail(
   patientEmail: string,
   patientName: string,
@@ -19,13 +29,13 @@ export async function sendEmail(
   tokenId: string,
   expectedConsultTime?: string
 ) {
-  const trackingUrl = `${process.env.APP_URL || "https://localhost:3000"}/?tracker=${tokenNumber}`;
+  const trackingUrl = `${process.env.APP_URL || 'https://localhost:3000'}/?tracker=${tokenNumber}`;
 
-  let expectedTimeHtml = "";
+  let expectedTimeHtml = '';
   if (expectedConsultTime) {
     const d = new Date(expectedConsultTime);
-    const dateFormatted = d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
-    const timeFormatted = d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
+    const dateFormatted = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timeFormatted = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
     expectedTimeHtml = `<p style="margin:0 0 12px;color:#1e40af;font-size:14px"><strong>Expected Consult:</strong> ${dateFormatted} • ${timeFormatted}</p>`;
   }
 
@@ -48,14 +58,16 @@ export async function sendEmail(
       `,
     });
 
-    await supabase.from("whatsapp_logs").insert({
+    // Log successful send (reusing whatsapp_logs table for email audit)
+    await insertNotificationLog({
       token_id: tokenId,
-      type: "email_token_created",
-      patient_mobile: patientEmail,
+      type: 'email_token_created',
+      patient_mobile: patientEmail, // repurposed column
       message: customMessage,
-      status: "sent",
+      status: 'sent',
     });
-  } catch (err) {
-    console.error("[Email] send failed", err);
+  } catch (err: any) {
+    console.error('[EmailService] Send failed:', err);
+    throw err;
   }
 }

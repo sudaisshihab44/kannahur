@@ -1,18 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  ShieldCheck, User, Lock, KeyRound, ArrowRight, ArrowLeft, 
-  HeartPulse, Sparkles, Eye, EyeOff, Building, Activity, 
-  ChevronRight, Info, Layers, CheckCircle2, Stethoscope,
-  Check, ServerCrash
+  ShieldCheck, User, Lock, ArrowRight, ArrowLeft, 
+  HeartPulse, Sparkles, Eye, EyeOff, Building,
+  ChevronRight, Info, CheckCircle2, ServerCrash
 } from 'lucide-react';
-import { ReceptionUser, UserRole } from '../types';
+import { ReceptionUser } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: ReceptionUser) => void;
-  users: ReceptionUser[];
 }
 
-export default function LoginScreen({ onLoginSuccess, users }: LoginScreenProps) {
+export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
+  // Get auth context for JWT authentication
+  const { login: authLogin } = useAuth();
+  
   // Navigation / Portal Selection State
   const [selectedPortal, setSelectedPortal] = useState<'none' | 'reception' | 'admin'>('none');
   
@@ -69,29 +71,25 @@ export default function LoginScreen({ onLoginSuccess, users }: LoginScreenProps)
     setError('');
 
     try {
-      const response = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          username: username.trim(),
-          password,
-          portal: selectedPortal
-        }),
-      });
+      // Use new JWT authentication
+      await authLogin(username.trim(), password, selectedPortal);
       
-      const data = await response.json();
-      if (response.ok && data.success) {
+      // If login successful, get user data from localStorage (set by AuthContext)
+      const userData = localStorage.getItem('user');
+      if (userData) {
+        const user = JSON.parse(userData);
+        
+        // Handle remember me
         if (rememberMe) {
           localStorage.setItem('inclusyq_remembered_user', username.trim());
         } else {
           localStorage.removeItem('inclusyq_remembered_user');
         }
-        onLoginSuccess(data.user);
-      } else {
-        setError(data.message || 'Authentication failed. Please check your credentials.');
+        
+        onLoginSuccess(user);
       }
-    } catch (err) {
-      setError('Clinical database handshake timed out. Please verify system network status.');
+    } catch (err: any) {
+      setError(err.message || 'Authentication failed. Please check your credentials.');
     } finally {
       setLoading(false);
     }

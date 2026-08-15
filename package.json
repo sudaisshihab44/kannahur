@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "predev": "powershell -Command \"@(3000,24678) | ForEach-Object { $p=(netstat -ano | Select-String \\\":$_\\\" | Select-String 'LISTENING'); if($p){ $pid=($p -split '\\s+')[-1]; Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue; Write-Host \\\"Freed port $_\\\" } }\"",
+    "predev": "powershell -Command \"@(3000,24678) | ForEach-Object { $p=(netstat -ano | Select-String \\\":$_\\\" | Select-String 'LISTENING'); if($p){ $procId=($p -split '\\s+')[-1]; Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue; Write-Host \\\"Freed port $_\\\" } }\"",
     "dev": "tsx server.ts",
     "build": "vite build",
     "build:api": "tsc -p tsconfig.api.json --noEmit",

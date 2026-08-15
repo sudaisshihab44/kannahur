@@ -36,6 +36,31 @@ export default memo(function ReceptionDashboard({
     (currentUser.permissions && currentUser.permissions.includes('set_priority'))
   );
 
+  // ── Optimistic local token list (Task 7) ──────────────────────────────────
+  // Declared BEFORE the allowedTokens useMemo that references it.
+  // When a token is successfully created we optimistically prepend it to the
+  // local list so the receptionist sees it instantly without waiting for the
+  // next polling cycle to return from the server.
+  const [optimisticTokens, setOptimisticTokens] = useState<Token[]>([]);
+
+  // ── Per-token action in-flight guard (Task 8) ─────────────────────────────
+  // Tracks which tokenIds have an in-flight action so the receptionist
+  // cannot double-click Call / Complete / Skip on the same token.
+  // Declared BEFORE any useMemo that might reference it.
+  const [actionInFlight, setActionInFlight] = useState<Set<string>>(new Set());
+
+  const setTokenInFlight = useCallback((tokenId: string) => {
+    setActionInFlight(prev => new Set(prev).add(tokenId));
+  }, []);
+
+  const clearTokenInFlight = useCallback((tokenId: string) => {
+    setActionInFlight(prev => {
+      const next = new Set(prev);
+      next.delete(tokenId);
+      return next;
+    });
+  }, []);
+
   // ── Memoized filtered lists — only recompute when source arrays change ──
   const allowedDepartments = useMemo(() => departments.filter(dept => {
     if (!currentUser || currentUser.role === UserRole.ADMIN) return true;
@@ -84,29 +109,6 @@ export default memo(function ReceptionDashboard({
   const [isRegistering, setIsRegistering] = useState(false);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [formError, setFormError] = useState('');
-
-  // ── Optimistic local token list (Task 7) ──────────────────────────────────
-  // When a token is successfully created we optimistically prepend it to the
-  // local list so the receptionist sees it instantly without waiting for the
-  // next polling cycle to return from the server.
-  const [optimisticTokens, setOptimisticTokens] = useState<Token[]>([]);
-
-  // ── Per-token action in-flight guard (Task 8) ─────────────────────────────
-  // Tracks which tokenIds have an in-flight action so the receptionist
-  // cannot double-click Call / Complete / Skip on the same token.
-  const [actionInFlight, setActionInFlight] = useState<Set<string>>(new Set());
-
-  const setTokenInFlight = useCallback((tokenId: string) => {
-    setActionInFlight(prev => new Set(prev).add(tokenId));
-  }, []);
-
-  const clearTokenInFlight = useCallback((tokenId: string) => {
-    setActionInFlight(prev => {
-      const next = new Set(prev);
-      next.delete(tokenId);
-      return next;
-    });
-  }, []);
 
   const handleUnassignDevice = async (deviceId: string) => {
     try {

@@ -75,7 +75,7 @@ export function startRequestLog(
     );
   };
 
-  return { requestId, reqLog, done };
+  return { requestId, reqLog: reqLog as any, done };
 }
 
 // ── Express middleware ─────────────────────────────────────────────────────────

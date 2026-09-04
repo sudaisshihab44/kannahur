@@ -1,4 +1,4 @@
-/**
+﻿/**
  * api/admin.ts — Admin CRUD Router (Serverless Function #3 of 4)
  *
  * Enterprise-refactored thin router with ZERO business logic.
@@ -22,13 +22,13 @@
  *   PUT    /api/admin/settings/hospital
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { applyCors } from './middleware/corsMiddleware.js';
-import { wrapAsync } from './middleware/errorHandler.js';
-import { requireAdmin } from './middleware/authMiddleware.js';
-import { requireJwtAdmin } from './middleware/jwtAuthMiddleware.js';
-import { securityHeadersMiddleware } from './middleware/securityHeaders.js';
-import { sensitiveRateLimiter } from './middleware/rateLimiter.js';
-import { csrfProtection } from './middleware/csrfProtection.js';
+import { applyCors } from '../src-api/middleware/corsMiddleware.js';
+import { wrapAsync } from '../src-api/middleware/errorHandler.js';
+import { requireAdmin } from '../src-api/middleware/authMiddleware.js';
+import { requireJwtAdmin } from '../src-api/middleware/jwtAuthMiddleware.js';
+import { securityHeadersMiddleware } from '../src-api/middleware/securityHeaders.js';
+import { sensitiveRateLimiter } from '../src-api/middleware/rateLimiter.js';
+import { csrfProtection } from '../src-api/middleware/csrfProtection.js';
 import {
   createDoctorHandler,
   updateDoctorHandler,
@@ -45,7 +45,7 @@ import {
   deleteStaffHandler,
   updateQueueConfigHandler,
   updateHospitalInfoHandler,
-} from './controllers/adminController.js';
+} from '../src-api/controllers/adminController.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Apply CORS, handle preflight

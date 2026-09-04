@@ -19,7 +19,9 @@ const SLOW_QUERY_MS = parseInt(process.env.SLOW_QUERY_MS ?? '200', 10);
 // ── Raw client ────────────────────────────────────────────────────────────────
 
 export const supabaseRaw = createClient(
-  process.env.SUPABASE_URL!,
+  // Accept either SUPABASE_URL (server-only) or VITE_SUPABASE_URL (shared)
+  // so the same .env works without duplication.
+  (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   { auth: { autoRefreshToken: false, persistSession: false } }
 );

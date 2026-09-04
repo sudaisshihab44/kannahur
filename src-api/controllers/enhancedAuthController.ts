@@ -10,6 +10,7 @@ import { getClientIp } from '../utils/deviceUtils.js';
 import { extractBearerToken } from '../utils/jwtUtils.js';
 import { getUserActiveSessions } from '../repositories/authRepository.js';
 import { parseCookie, stringifySetCookie } from 'cookie';
+import { resetAuthLimiter } from '../middleware/rateLimiter.js';
 
 /** Minimal cookie serialize helper matching the old cookie.serialize() API */
 function serializeCookie(name: string, val: string, options: Record<string, any> = {}): string {
@@ -57,6 +58,10 @@ export async function enhancedLoginHandler(req: VercelRequest, res: VercelRespon
       path: '/',
     }));
   }
+
+  // Reset the per-username rate limit counter so the user is not locked
+  // out on their next page load if they previously mistyped their password.
+  resetAuthLimiter(result.user?.username ?? username, ipAddress);
 
   // Return tokens + user data (BACKWARD COMPATIBLE)
   return res.status(200).json({

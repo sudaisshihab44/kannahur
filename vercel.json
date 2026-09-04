@@ -40,10 +40,10 @@
   ],
 
   "functions": {
-    "api/index.ts":  { "maxDuration": 30 },
-    "api/admin.ts":  { "maxDuration": 30 },
-    "api/tokens.ts": { "maxDuration": 30 },
-    "api/upload.ts": { "maxDuration": 60, "memory": 512 }
+    "api/index.ts":  { "maxDuration": 30, "includeFiles": "src-api/**" },
+    "api/admin.ts":  { "maxDuration": 30, "includeFiles": "src-api/**" },
+    "api/tokens.ts": { "maxDuration": 30, "includeFiles": "src-api/**" },
+    "api/upload.ts": { "maxDuration": 60, "memory": 512, "includeFiles": "src-api/**" }
   },
 
   "crons": []

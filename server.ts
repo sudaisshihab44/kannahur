@@ -1,4 +1,4 @@
-/**
+﻿/**
  * server.ts — LOCAL DEVELOPMENT ONLY
  *
  * This file is used exclusively when running `npm run dev` locally.
@@ -28,7 +28,7 @@ import { supabase } from "./src/lib/supabaseServer.js";
 
 // ── Monitoring bootstrap ──────────────────────────────────────────────────────
 // Must happen before any request is served so Sentry catches startup errors.
-import { initSentry } from './api/monitoring/sentry.js';
+import { initSentry } from './src-api/monitoring/sentry.js';
 initSentry();
 
 // ============================================================
@@ -739,11 +739,11 @@ ensureDefaultCredentials().catch((err) => {
 // ── BullMQ workers ────────────────────────────────────────────────────────────
 // Workers are started after env is loaded (dotenv.config runs above).
 // They are no-ops when REDIS_URL is not set — jobs fall back to in-process.
-import { startWorkers } from './api/jobs/scheduler.js';
-import { expressRequestLogger } from './api/middleware/requestLogger.js';
+import { startWorkers } from './src-api/jobs/scheduler.js';
+import { expressRequestLogger } from './src-api/middleware/requestLogger.js';
 import {
   healthHandler, readyHandler, liveHandler, metricsHandler,
-} from './api/controllers/healthController.js';
+} from './src-api/controllers/healthController.js';
 
 let stopWorkers: (() => Promise<void>) | null = null;
 
@@ -1900,8 +1900,8 @@ if (process.env.NODE_ENV !== "production" && process.env.VERCEL !== "1" && !proc
 
 // ------ Global error handler (catches unhandled route errors) ------
 app.use((err: any, req: any, res: any, next: any) => {
-  const { generateErrorId } = require('./api/config/logger.js');
-  const errorId = generateErrorId();
+  // Inline errorId generation — avoids require() of logger module
+  const errorId = `ERR-${Date.now().toString(36)}`;
   const status  = err.status || 500;
   const message = err.message || "Internal server error";
   console.error(`[UNHANDLED ERROR] errorId=${errorId} ${req.method} ${req.path}:`, err);

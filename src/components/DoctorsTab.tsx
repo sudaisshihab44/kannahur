@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState } from 'react';
 import { 
   Plus, Edit, Trash2, AlertCircle, Stethoscope, Clock, ShieldAlert, 
@@ -146,7 +147,7 @@ export default function DoctorsTab({
   const handleDeleteDoctor = async (id: string) => {
     if (!confirm("Are you sure you want to delete this physician record permanently?")) return;
     try {
-      const res = await fetch(`/api/admin/doctors/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/admin/doctors/${id}`, { method: 'DELETE' });
       if (res.ok) {
         await onRefreshData();
         showToast('Physician record deleted successfully');
@@ -158,7 +159,7 @@ export default function DoctorsTab({
 
   const handleQuickStatusChange = async (docId: string, newStatus: Doctor['status']) => {
     try {
-      const res = await fetch(`/api/admin/doctors/${docId}`, {
+      const res = await authFetch(`/api/admin/doctors/${docId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })

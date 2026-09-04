@@ -11,6 +11,8 @@ import {
 } from './types';
 
 import { Routes, Route } from 'react-router-dom';
+import { useAuth } from './contexts/AuthContext';
+import { authFetchState } from './utils/authFetch';
 
 // Lazy-loaded page-level components — each becomes its own JS chunk
 const LoginScreen      = lazy(() => import('./components/LoginScreen'));
@@ -37,6 +39,9 @@ export default function App() {
   const [activeView, setActiveView] = useState<'login' | 'reception' | 'admin' | 'tv' | 'tracking'>('login');
   const [currentUser, setCurrentUser] = useState<ReceptionUser | null>(null);
   const [adminTab, setAdminTab] = useState<'dashboard' | 'departments' | 'doctors' | 'rooms' | 'staff' | 'queue-settings' | 'reports' | 'audit-logs' | 'hospital-settings'>('dashboard');
+
+  // JWT access token from AuthContext — used to authenticate API calls
+  const { accessToken, isLoading: authIsLoading } = useAuth();
 
   // Synchronized database states
   const [departments, setDepartments]   = useState<Department[]>([]);
@@ -70,11 +75,24 @@ export default function App() {
 
   // Primary API syncing handler — stable reference via useCallback so
   // child components that receive it as a prop don't re-render needlessly.
+  // Sends JWT Bearer token for authentication; falls back to x-operator-username
+  // legacy header when JWT is not yet available (e.g. on first load).
   const refreshDatabaseState = useCallback(async () => {
     setIsSyncing(true);
     setSyncError(false);
     try {
-      const response = await fetch('/api/data');
+      const headers: Record<string, string> = {};
+      // authFetchState.accessToken is set synchronously on login (module-level),
+      // so it is always current even if React's accessToken state hasn't updated yet.
+      const token = authFetchState.accessToken || accessToken;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else if (currentUser?.username) {
+        // Legacy fallback for non-JWT path
+        headers['X-Operator-Username'] = currentUser.username;
+      }
+
+      const response = await fetch('/api/data', { headers });
       if (response.ok) {
         const data = await response.json();
         setDepartments(data.departments          || []);
@@ -87,6 +105,10 @@ export default function App() {
         // Thread admin-only data down so AdminDashboard never double-fetches
         setRooms(data.consultation_rooms         || []);
         setQueueLogs(data.queue_logs             || []);
+      } else if (response.status === 401) {
+        // Not authenticated yet — don't set syncError, just wait for login
+        setIsSyncing(false);
+        return;
       } else {
         setSyncError(true);
       }
@@ -95,23 +117,38 @@ export default function App() {
     } finally {
       setIsSyncing(false);
     }
-  }, []); // no deps — setter functions from useState are stable
+  }, [accessToken, currentUser?.username]); // re-create when token changes
 
   // Toggle Hold/Pause Queue settings
   const handleTogglePause = useCallback(async () => {
     try {
-      const response = await fetch('/api/queue/pause', { method: 'POST' });
+      const headers: Record<string, string> = {};
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      } else if (currentUser?.username) {
+        headers['X-Operator-Username'] = currentUser.username;
+      }
+      const response = await fetch('/api/queue/pause', { method: 'POST', headers });
       if (response.ok) await refreshDatabaseState();
     } catch (err) {
       console.error(err);
     }
-  }, [refreshDatabaseState]);
+  }, [refreshDatabaseState, accessToken, currentUser?.username]);
 
-  // Initial sync + visibility-aware polling
-  // - Polls every 5 s when the tab is visible (was 3 s — 40% fewer requests)
-  // - Pauses automatically when the tab is hidden (zero wasted requests)
+  // Trigger a data refresh whenever the access token changes (login/refresh)
+  // This is the ONLY place that starts the first authenticated fetch.
   useEffect(() => {
-    refreshDatabaseState();
+    if (accessToken) {
+      refreshDatabaseState();
+    }
+  }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Visibility-aware polling — only polls while authenticated.
+  // The initial fetch is handled by the accessToken effect above,
+  // so we do NOT call refreshDatabaseState() unconditionally on mount.
+  useEffect(() => {
+    // Don't start polling until we have a token
+    if (!accessToken) return;
 
     const POLL_MS = 5000;
     let interval: ReturnType<typeof setInterval> | null = null;
@@ -132,7 +169,6 @@ export default function App() {
       if (document.hidden) {
         stopPolling();
       } else {
-        // Re-fetch immediately on tab focus then resume interval
         refreshDatabaseState();
         startPolling();
       }
@@ -145,7 +181,7 @@ export default function App() {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [refreshDatabaseState]);
+  }, [accessToken, refreshDatabaseState]); // restart interval when token rotates
 
   // URL Route / Tracking link detection
   useEffect(() => {
@@ -169,6 +205,12 @@ export default function App() {
     } else {
       setActiveView('reception');
     }
+    // Immediately trigger a data fetch. At this point the accessToken
+    // may not yet be in React state (setState is async), so we also
+    // call refreshDatabaseState directly — the stored token in
+    // authFetchState.accessToken is already set synchronously by
+    // AuthContext.storeToken(), so the fetch will be authenticated.
+    refreshDatabaseState();
   };
 
   const handleLogout = () => {
@@ -183,6 +225,13 @@ export default function App() {
     setActiveView('login');
     setToastMessage("Signed out successfully.");
   };
+
+  // While AuthContext is determining whether a stored session is still valid,
+  // render a neutral loader so we never flash the login screen then immediately
+  // redirect to the dashboard (or vice-versa).
+  if (authIsLoading) {
+    return <AppLoader />;
+  }
 
   if (window.location.pathname.includes('/track/')) {
     return (
@@ -243,9 +292,8 @@ export default function App() {
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#f8fafc] font-sans">
-      {/* Sidebar Navigation */}
-      {settings && (
-        <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between p-6 shrink-0 select-none">
+      {/* Sidebar Navigation — always shown when logged in, regardless of settings load state */}
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between p-6 shrink-0 select-none">
           <div className="space-y-8">
             {/* Logo */}
             <div className="flex items-center gap-3">
@@ -405,13 +453,11 @@ export default function App() {
             )}
           </div>
         </aside>
-      )}
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Top Bar */}
-        {settings && (
-          <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 select-none">
+        {/* Top Bar — always rendered; shows hospital name once settings load */}
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 select-none">
             {/* Search query placeholder */}
             <div className="relative">
               <input 
@@ -427,8 +473,8 @@ export default function App() {
             {/* Hospital & Sync state */}
             <div className="flex items-center gap-6">
               <div className="text-right">
-                <div className="text-xs font-bold text-slate-800">{settings.hospitalInfo.name}</div>
-                <div className="text-[10px] text-slate-400 font-semibold">{settings.hospitalInfo.tagline}</div>
+                <div className="text-xs font-bold text-slate-800">{settings?.hospitalInfo?.name ?? 'Loading…'}</div>
+                <div className="text-[10px] text-slate-400 font-semibold">{settings?.hospitalInfo?.tagline ?? ''}</div>
               </div>
 
               <div className="h-6 w-[1px] bg-slate-200"></div>
@@ -442,7 +488,6 @@ export default function App() {
               </div>
             </div>
           </header>
-        )}
 
         {/* Dynamic view workspace wrapper with customized scrolling */}
         <div className={`flex-1 overflow-y-auto ${activeView === 'admin' ? '' : 'p-8'}`}>
@@ -451,7 +496,8 @@ export default function App() {
               <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
             </div>
           }>
-            {activeView === 'reception' && settings && (
+            {activeView === 'reception' && (
+              settings ? (
               <ReceptionDashboard
                 departments={departments}
                 doctors={doctors}
@@ -463,9 +509,18 @@ export default function App() {
                 onTogglePause={handleTogglePause}
                 currentUser={currentUser}
               />
+              ) : (
+                <div className="flex items-center justify-center h-64">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+                    <span className="text-xs font-semibold text-slate-400">Loading dashboard data…</span>
+                  </div>
+                </div>
+              )
             )}
 
-            {activeView === 'admin' && settings && (
+            {activeView === 'admin' && (
+              settings ? (
               <AdminDashboard
                 departments={departments}
                 doctors={doctors}
@@ -480,13 +535,20 @@ export default function App() {
                 currentUser={currentUser}
                 onLogout={handleLogout}
               />
+              ) : (
+                <div className="flex items-center justify-center h-64">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+                    <span className="text-xs font-semibold text-slate-400">Loading dashboard data…</span>
+                  </div>
+                </div>
+              )
             )}
           </Suspense>
         </div>
 
-        {/* Mini Footer */}
-        {settings && (
-          <footer className="h-10 bg-white border-t border-slate-200 flex items-center justify-between px-8 text-[10px] text-slate-400 font-semibold select-none shrink-0">
+        {/* Mini Footer — always rendered */}
+        <footer className="h-10 bg-white border-t border-slate-200 flex items-center justify-between px-8 text-[10px] text-slate-400 font-semibold select-none shrink-0">
             <div className="flex items-center gap-1.5">
               <Database className="h-3.5 w-3.5 text-slate-400" />
               <span>Database: <strong>Supabase · End-to-End Encrypted</strong></span>
@@ -497,7 +559,6 @@ export default function App() {
               InclusyQ • Enterprise SaaS Platform
             </div>
           </footer>
-        )}
       </div>
 
       {/* Custom Sign Out Confirmation Modal */}

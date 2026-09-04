@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect } from 'react';
 import { 
   Save, AlertCircle, Sparkles, Sliders, Ticket, RefreshCw, BadgeInfo,
@@ -68,7 +69,7 @@ export default function QueueSettingsTab({
     setErrorMsg('');
 
     try {
-      const res = await fetch('/api/admin/queue-config', {
+      const res = await authFetch('/api/admin/queue-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

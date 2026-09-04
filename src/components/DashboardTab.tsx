@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState } from 'react';
 import { 
   BarChart2, Clock, CheckCircle, AlertCircle, Plus, Trash2, Sparkles, 
@@ -71,7 +72,7 @@ export default function DashboardTab({
 
     setAnnSaving(true);
     try {
-      const res = await fetch('/api/settings/announcements', {
+      const res = await authFetch('/api/settings/announcements', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: newAnnText })
@@ -89,7 +90,7 @@ export default function DashboardTab({
 
   const handleDeleteAnnouncement = async (id: string) => {
     try {
-      const res = await fetch(`/api/settings/announcements/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/settings/announcements/${id}`, { method: 'DELETE' });
       if (res.ok) {
         await onRefreshData();
       }

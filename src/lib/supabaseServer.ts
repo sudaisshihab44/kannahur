@@ -5,7 +5,8 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 export const supabase = createClient(
-  process.env.SUPABASE_URL!,
+  // Accept either SUPABASE_URL (explicit server-only) or VITE_SUPABASE_URL
+  (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL)!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
   {
     auth: {

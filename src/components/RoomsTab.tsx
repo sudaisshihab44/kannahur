@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState } from 'react';
 import { 
   Plus, Edit, Trash2, AlertCircle, DoorOpen, Monitor, CheckCircle,
@@ -131,7 +132,7 @@ export default function RoomsTab({
   const handleDeleteRoom = async (id: string) => {
     if (!confirm("Are you sure you want to delete this consultation room record?")) return;
     try {
-      const res = await fetch(`/api/admin/rooms/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/admin/rooms/${id}`, { method: 'DELETE' });
       if (res.ok) {
         await onRefreshData();
         showToast('Consultation suite removed successfully');

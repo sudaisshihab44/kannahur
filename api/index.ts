@@ -1,4 +1,4 @@
-/**
+﻿/**
  * api/index.ts — Main API Router (Serverless Function #1 of 4)
  *
  * Enterprise-refactored thin router with ZERO business logic.
@@ -32,14 +32,14 @@
  *   GET  /api/metrics                         — NEW: Prometheus metrics exposition
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { applyCors } from './middleware/corsMiddleware.js';
-import { wrapAsync } from './middleware/errorHandler.js';
-import { requireAuth } from './middleware/authMiddleware.js';
-import { requireJwtAuth } from './middleware/jwtAuthMiddleware.js';
-import { securityHeadersMiddleware } from './middleware/securityHeaders.js';
-import { authRateLimiter, apiRateLimiter, publicRateLimiter } from './middleware/rateLimiter.js';
-import { csrfProtection } from './middleware/csrfProtection.js';
-import { loginHandler } from './controllers/authController.js';
+import { applyCors } from '../src-api/middleware/corsMiddleware.js';
+import { wrapAsync } from '../src-api/middleware/errorHandler.js';
+import { requireAuth } from '../src-api/middleware/authMiddleware.js';
+import { requireJwtAuth } from '../src-api/middleware/jwtAuthMiddleware.js';
+import { securityHeadersMiddleware } from '../src-api/middleware/securityHeaders.js';
+import { authRateLimiter, apiRateLimiter, publicRateLimiter, refreshRateLimiter } from '../src-api/middleware/rateLimiter.js';
+import { csrfProtection } from '../src-api/middleware/csrfProtection.js';
+import { loginHandler } from '../src-api/controllers/authController.js';
 import {
   enhancedLoginHandler,
   refreshTokenHandler,
@@ -47,37 +47,37 @@ import {
   verifyTokenHandler,
   getActiveSessionsHandler,
   revokeAllSessionsHandler,
-} from './controllers/enhancedAuthController.js';
-import { getDataHandler } from './controllers/dataController.js';
+} from '../src-api/controllers/enhancedAuthController.js';
+import { getDataHandler } from '../src-api/controllers/dataController.js';
 import {
   getQueueHandler,
   togglePauseHandler,
   addAnnouncementHandler,
   deleteAnnouncementHandler,
-} from './controllers/queueController.js';
-import { createPatientHandler } from './controllers/patientController.js';
+} from '../src-api/controllers/queueController.js';
+import { createPatientHandler } from '../src-api/controllers/patientController.js';
 import {
   listDevicesHandler,
   createDeviceHandler,
   assignDeviceHandler,
   unassignDeviceHandler,
-} from './controllers/deviceController.js';
-import { trackTokenHandler } from './controllers/trackController.js';
-import { ensureDefaultCredentials } from './utils/seed.js';
-import { sanitizeResponse } from './utils/sanitization.js';
+} from '../src-api/controllers/deviceController.js';
+import { trackTokenHandler } from '../src-api/controllers/trackController.js';
+import { ensureDefaultCredentials } from '../src-api/utils/seed.js';
+import { sanitizeResponse } from '../src-api/utils/sanitization.js';
 import {
   getJobStatsHandler,
   retryQueueHandler,
   discardQueueHandler,
-} from './controllers/jobsController.js';
+} from '../src-api/controllers/jobsController.js';
 import {
   healthHandler,
   readyHandler,
   liveHandler,
   metricsHandler,
-} from './controllers/healthController.js';
-import { startRequestLog } from './middleware/requestLogger.js';
-import { initSentry } from './monitoring/sentry.js';
+} from '../src-api/controllers/healthController.js';
+import { startRequestLog } from '../src-api/middleware/requestLogger.js';
+import { initSentry } from '../src-api/monitoring/sentry.js';
 
 // Initialise Sentry once per cold start (no-op when SENTRY_DSN is unset)
 initSentry();
@@ -130,9 +130,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return wrapAsync(logoutHandler)(req, res);
     }
 
-    // ── POST /api/auth/refresh (NEW - refresh access token) ──────────────────
+    // ── POST /api/auth/refresh ────────────────────────────────────────────────
+    // Uses its own generous rate limiter (30 req / 15 min) so background
+    // refresh calls never eat into the strict login quota (10 req / 15 min).
     if (path === '/api/auth/refresh' && method === 'POST') {
-      if (!(await authRateLimiter(req, res))) return;
+      if (!(await refreshRateLimiter(req, res))) return;
       return wrapAsync(refreshTokenHandler)(req, res);
     }
 

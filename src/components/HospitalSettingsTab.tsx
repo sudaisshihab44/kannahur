@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Save, Sparkles, Building, Phone, MapPin, Clock, ShieldCheck, Heart,
@@ -125,7 +126,7 @@ export default function HospitalSettingsTab({
       if (logoFile) {
         const logoFormData = new FormData();
         logoFormData.append('logo', logoFile);
-        const res = await fetch('/api/admin/upload-logo', {
+        const res = await authFetch('/api/admin/upload-logo', {
           method: 'POST',
           body: logoFormData
         });
@@ -142,7 +143,7 @@ export default function HospitalSettingsTab({
         logoUrl: finalLogoUrl
       };
 
-      const res = await fetch('/api/admin/hospital-info', {
+      const res = await authFetch('/api/admin/hospital-info', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

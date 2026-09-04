@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState } from 'react';
 import { 
   Plus, Edit, Trash2, AlertCircle, Shield, User, Key, Check,
@@ -179,7 +180,7 @@ export default function StaffTab({
     }
     if (!confirm("Are you sure you want to delete this staff user record permanently?")) return;
     try {
-      const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
       if (res.ok) {
         await onRefreshData();
         showToast('Staff credentials revoked');

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { getPriorityWeight } from '../utils/priority';
 import { Department, Doctor, Token, TokenStatus, Gender, QueueSettings, Patient, ReceptionUser, UserRole, TrackingDevice } from '../types';
+import { authFetch } from '../utils/authFetch';
 
 interface ReceptionDashboardProps {
   departments: Department[];
@@ -112,7 +113,7 @@ export default memo(function ReceptionDashboard({
 
   const handleUnassignDevice = async (deviceId: string) => {
     try {
-      await fetch('/api/devices/unassign', {
+      await authFetch('/api/devices/unassign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceId })
@@ -247,7 +248,7 @@ export default memo(function ReceptionDashboard({
       if (response.ok && data.success) {
         if (selectedDeviceId && data.token?.id) {
           try {
-            await fetch('/api/devices/assign', {
+            await authFetch('/api/devices/assign', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ deviceId: selectedDeviceId, tokenId: data.token.id })

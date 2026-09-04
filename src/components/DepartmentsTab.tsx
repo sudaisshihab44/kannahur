@@ -1,3 +1,4 @@
+﻿import { authFetch } from '../utils/authFetch';
 import React, { useState } from 'react';
 import { 
   Plus, Edit, Trash2, AlertCircle, Building, Check, X, ShieldAlert, 
@@ -126,7 +127,7 @@ export default function DepartmentsTab({
   const handleDeleteDept = async (id: string) => {
     if (!confirm("Delete this clinical division? Active queues and settings for this division will be permanently impacted.")) return;
     try {
-      const res = await fetch(`/api/admin/departments/${id}`, { method: 'DELETE' });
+      const res = await authFetch(`/api/admin/departments/${id}`, { method: 'DELETE' });
       if (res.ok) {
         await onRefreshData();
         showToast('Clinical division permanently archived');
@@ -138,7 +139,7 @@ export default function DepartmentsTab({
 
   const handleToggleEnable = async (dept: Department) => {
     try {
-      const res = await fetch(`/api/admin/departments/${dept.id}`, {
+      const res = await authFetch(`/api/admin/departments/${dept.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

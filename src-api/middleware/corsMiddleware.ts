@@ -8,8 +8,10 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://inclusyq.vercel.app',
   process.env.FRONTEND_URL,
+  process.env.APP_URL,
+  // On Vercel: set FRONTEND_URL to your actual deployment URL
+  // e.g. https://inclusyq-3.vercel.app  or  https://your-custom-domain.com
 ].filter(Boolean);
 
 export function applyCors(req: VercelRequest, res: VercelResponse): boolean {

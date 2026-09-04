@@ -1,4 +1,4 @@
-/**
+﻿/**
  * api/tokens.ts — Token Operations Router (Serverless Function #2 of 4)
  *
  * Enterprise-refactored thin router with ZERO business logic.
@@ -13,13 +13,13 @@
  *   POST /api/tokens/:id/recall         — recall token
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { applyCors } from './middleware/corsMiddleware.js';
-import { wrapAsync } from './middleware/errorHandler.js';
-import { requireAuth } from './middleware/authMiddleware.js';
-import { requireJwtAuth } from './middleware/jwtAuthMiddleware.js';
-import { securityHeadersMiddleware } from './middleware/securityHeaders.js';
-import { apiRateLimiter } from './middleware/rateLimiter.js';
-import { csrfProtection } from './middleware/csrfProtection.js';
+import { applyCors } from '../src-api/middleware/corsMiddleware.js';
+import { wrapAsync } from '../src-api/middleware/errorHandler.js';
+import { requireAuth } from '../src-api/middleware/authMiddleware.js';
+import { requireJwtAuth } from '../src-api/middleware/jwtAuthMiddleware.js';
+import { securityHeadersMiddleware } from '../src-api/middleware/securityHeaders.js';
+import { apiRateLimiter } from '../src-api/middleware/rateLimiter.js';
+import { csrfProtection } from '../src-api/middleware/csrfProtection.js';
 import {
   createTokenHandler,
   callTokenHandler,
@@ -27,7 +27,7 @@ import {
   skipTokenHandler,
   cancelTokenHandler,
   recallTokenHandler,
-} from './controllers/tokenController.js';
+} from '../src-api/controllers/tokenController.js';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // Apply CORS, handle preflight

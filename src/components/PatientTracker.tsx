@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useCallback, memo } from 'react';
-import { Search, HeartPulse, Clock, Users, ChevronRight, RefreshCw, Smartphone, MapPin, AlertCircle, CheckCircle } from 'lucide-react';
+import {
+  Search, Clock, Users, ChevronRight, RefreshCw,
+  Smartphone, MapPin, AlertCircle, CheckCircle,
+} from 'lucide-react';
 import { Token, TokenStatus, QueueSettings } from '../types';
 import { getPriorityWeight } from '../utils/priority';
 
@@ -10,80 +13,61 @@ interface PatientTrackerProps {
 }
 
 export default memo(function PatientTracker({ tokens, settings, onBackToApp }: PatientTrackerProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedToken, setSelectedToken] = useState<Token | null>(null);
-  const [errorMsg, setErrorMsg] = useState('');
-  const [isRefreshing, setIsRefreshing] = useState(false);
-
-  // Dynamic tracking states
+  const [searchQuery,    setSearchQuery]    = useState('');
+  const [selectedToken,  setSelectedToken]  = useState<Token | null>(null);
+  const [errorMsg,       setErrorMsg]       = useState('');
+  const [isRefreshing,   setIsRefreshing]   = useState(false);
   const [trackedTokenId, setTrackedTokenId] = useState<string | null>(null);
-  const [myToken, setMyToken] = useState<any>(null);
+  const [myToken,        setMyToken]        = useState<Token | null>(null);
   const [currentServingToken, setCurrentServingToken] = useState<any>(null);
-  const [aheadCount, setAheadCount] = useState<number>(0);
+  const [aheadCount,     setAheadCount]     = useState<number>(0);
 
-  // Extract tokenId from URL path '/track/:tokenId' or query param '?tracker=...'
+  // ── Extract tokenId from URL on mount ────────────────────────────────────
   useEffect(() => {
     const path = window.location.pathname;
     if (path.includes('/track/')) {
-      const parts = path.split('/track/');
-      const id = parts[parts.length - 1];
-      if (id) {
-        setTrackedTokenId(id);
-        return;
-      }
+      const id = path.split('/track/').pop();
+      if (id) { setTrackedTokenId(id); return; }
     }
-
-    const params = new URLSearchParams(window.location.search);
+    const params       = new URLSearchParams(window.location.search);
     const trackerParam = params.get('tracker');
     if (trackerParam) {
       if (trackerParam.startsWith('tok-')) {
         setTrackedTokenId(trackerParam);
       } else {
-        // Fallback for legacy token numbers
         const found = tokens.find(t => t.tokenNumber.toUpperCase() === trackerParam.toUpperCase());
-        if (found) {
-          setTrackedTokenId(found.id);
-        }
+        if (found) setTrackedTokenId(found.id);
       }
     }
   }, [tokens]);
 
+  // ── Fetch from /api/track/:id ─────────────────────────────────────────────
   const fetchTrackData = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/track/${id}`);
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.myToken) {
-          const mappedToken: Token = {
-            id: data.myToken.id,
-            tokenNumber: data.myToken.token_number,
-            patientName: data.myToken.patient_name,
-            patientMobile: data.myToken.patient_mobile,
-            patientEmail: data.myToken.patient_email,
-            patientAge: data.myToken.patient_age,
-            patientGender: data.myToken.patient_gender,
-            departmentId: data.myToken.department_id,
-            departmentName: data.myToken.department_name,
-            doctorId: data.myToken.doctor_id,
-            doctorName: data.myToken.doctor_name,
-            reasonForVisit: data.myToken.reason_for_visit,
-            status: data.myToken.status,
-            createdAt: data.myToken.created_at,
-            calledAt: data.myToken.called_at,
-            completedAt: data.myToken.completed_at,
-            isEmergency: data.myToken.is_emergency,
-            priority: data.myToken.priority,
-            notes: data.myToken.notes,
-            position: data.myToken.position,
-            estimatedConsultationTime: data.myToken.estimated_consultation_time,
-            estimatedWaitTime: data.myToken.estimated_wait_time,
-            expectedConsultationStartTime: data.myToken.expected_consultation_start_time,
-            lastNotifiedWaitTime: data.myToken.last_notified_wait_time,
-            notifiedTwoRemaining: data.myToken.notified_two_remaining,
-            notifiedYourTurn: data.myToken.notified_your_turn,
+          const mt = data.myToken;
+          const mapped: Token = {
+            id: mt.id, tokenNumber: mt.token_number, patientName: mt.patient_name,
+            patientMobile: mt.patient_mobile, patientEmail: mt.patient_email,
+            patientAge: mt.patient_age, patientGender: mt.patient_gender,
+            departmentId: mt.department_id, departmentName: mt.department_name,
+            doctorId: mt.doctor_id, doctorName: mt.doctor_name,
+            reasonForVisit: mt.reason_for_visit, status: mt.status,
+            createdAt: mt.created_at, calledAt: mt.called_at, completedAt: mt.completed_at,
+            isEmergency: mt.is_emergency, priority: mt.priority, notes: mt.notes,
+            position: mt.position,
+            estimatedConsultationTime: mt.estimated_consultation_time,
+            estimatedWaitTime: mt.estimated_wait_time,
+            expectedConsultationStartTime: mt.expected_consultation_start_time,
+            lastNotifiedWaitTime: mt.last_notified_wait_time,
+            notifiedTwoRemaining: mt.notified_two_remaining,
+            notifiedYourTurn: mt.notified_your_turn,
           };
-          setMyToken(mappedToken);
-          setSelectedToken(mappedToken);
+          setMyToken(mapped);
+          setSelectedToken(mapped);
           setCurrentServingToken(data.currentServing);
           setAheadCount(data.aheadCount);
           setErrorMsg('');
@@ -98,22 +82,16 @@ export default memo(function PatientTracker({ tokens, settings, onBackToApp }: P
     }
   }, []);
 
-  // Fetch once when trackedTokenId is set/changed.
-  // The parent App.tsx already polls /api/data every 5 s and passes fresh
-  // `tokens` props down, so we don't need a second polling interval here.
   useEffect(() => {
     if (!trackedTokenId) return;
     fetchTrackData(trackedTokenId);
   }, [trackedTokenId, fetchTrackData]);
 
-  // Auto look up first waiting token if none is selected and no active tracker URL
+  // Auto-select first waiting token if none set
   useEffect(() => {
     if (!trackedTokenId && !selectedToken && tokens.length > 0) {
       const waiting = tokens.find(t => t.status === TokenStatus.WAITING || t.status === TokenStatus.CALLED);
-      if (waiting) {
-        setSelectedToken(waiting);
-        setSearchQuery(waiting.tokenNumber);
-      }
+      if (waiting) { setSelectedToken(waiting); setSearchQuery(waiting.tokenNumber); }
     }
   }, [tokens, trackedTokenId, selectedToken]);
 
@@ -121,25 +99,11 @@ export default memo(function PatientTracker({ tokens, settings, onBackToApp }: P
     e.preventDefault();
     setErrorMsg('');
     const query = searchQuery.trim();
-    if (!query) {
-      setErrorMsg('Please enter a valid token number or reference ID');
-      return;
-    }
-
-    if (query.toUpperCase().startsWith('TOK-') || query.toLowerCase().startsWith('tok-')) {
-      setTrackedTokenId(query);
-      return;
-    }
-
+    if (!query) { setErrorMsg('Please enter a valid token number or reference ID.'); return; }
+    if (query.toLowerCase().startsWith('tok-')) { setTrackedTokenId(query); return; }
     const found = tokens.find(t => t.tokenNumber.toUpperCase() === query.toUpperCase() || t.id === query);
-    if (found) {
-      setTrackedTokenId(found.id);
-      setSelectedToken(found);
-    } else {
-      setErrorMsg(`Token "${query}" was not found. Please verify your receipt.`);
-      setSelectedToken(null);
-      setTrackedTokenId(null);
-    }
+    if (found) { setTrackedTokenId(found.id); setSelectedToken(found); }
+    else { setErrorMsg(`Token "${query}" not found. Please verify your receipt.`); setSelectedToken(null); setTrackedTokenId(null); }
   };
 
   const handleRefresh = () => {
@@ -148,26 +112,19 @@ export default memo(function PatientTracker({ tokens, settings, onBackToApp }: P
       fetchTrackData(trackedTokenId).finally(() => setIsRefreshing(false));
     } else if (selectedToken) {
       const fresh = tokens.find(t => t.id === selectedToken.id);
-      if (fresh) {
-        setSelectedToken(fresh);
-      }
+      if (fresh) setSelectedToken(fresh);
       setIsRefreshing(false);
     } else {
       setIsRefreshing(false);
     }
   };
 
-  // Calculations for selected token
+  // ── Queue stats calculation ───────────────────────────────────────────────
   const getQueueStats = (token: Token) => {
-    if (token.status === TokenStatus.COMPLETED) {
-      return { ahead: 0, time: 0, progress: 100, expectedTurn: '' };
-    }
-    if (token.status === TokenStatus.CALLED) {
-      return { ahead: 0, time: 0, progress: 90, expectedTurn: '' };
-    }
-    if (token.status === TokenStatus.CANCELLED || token.status === TokenStatus.SKIPPED) {
+    if (token.status === TokenStatus.COMPLETED)  return { ahead: 0, time: 0, progress: 100, expectedTurn: '' };
+    if (token.status === TokenStatus.CALLED)     return { ahead: 0, time: 0, progress: 90,  expectedTurn: '' };
+    if (token.status === TokenStatus.CANCELLED || token.status === TokenStatus.SKIPPED)
       return { ahead: 0, time: 0, progress: 0, expectedTurn: '' };
-    }
 
     if (myToken && trackedTokenId === token.id) {
       const time = myToken.estimatedWaitTime ?? 0;
@@ -179,243 +136,332 @@ export default memo(function PatientTracker({ tokens, settings, onBackToApp }: P
       return { ahead: aheadCount, time, progress, expectedTurn };
     }
 
-    // Filter tokens of the SAME doctor that are waiting and ahead of this one!
-    const doctorTokens = tokens.filter(t => t.doctorId === token.doctorId);
-    const doctorWaitingTokens = doctorTokens
-      .filter(t => t.status === TokenStatus.WAITING)
+    const doctorWaiting = tokens
+      .filter(t => t.doctorId === token.doctorId && t.status === TokenStatus.WAITING)
       .sort((a, b) => {
-        const weightA = getPriorityWeight(a.priority);
-        const weightB = getPriorityWeight(b.priority);
-        if (weightA !== weightB) {
-          return weightB - weightA;
-        }
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        const diff = getPriorityWeight(b.priority) - getPriorityWeight(a.priority);
+        return diff !== 0 ? diff : new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       });
-
-    const myIndex = doctorWaitingTokens.findIndex(t => t.id === token.id);
-    const ahead = myIndex === -1 ? 0 : myIndex;
-
-    // Use stored server values if they exist!
-    const time = token.estimatedWaitTime !== undefined ? token.estimatedWaitTime : (ahead * (token.estimatedConsultationTime || 12));
-    
-    // Expected Turn
+    const myIndex = doctorWaiting.findIndex(t => t.id === token.id);
+    const ahead   = myIndex === -1 ? 0 : myIndex;
+    const time    = token.estimatedWaitTime !== undefined ? token.estimatedWaitTime : ahead * (token.estimatedConsultationTime || 12);
     let expectedTurn = '';
     if (token.expectedConsultationStartTime) {
       expectedTurn = new Date(token.expectedConsultationStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     } else {
-      const startMs = Date.now() + (time * 60000);
-      expectedTurn = new Date(startMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      expectedTurn = new Date(Date.now() + time * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     }
-
-    // Progress bar calculation
-    const totalDoctorWaiting = doctorWaitingTokens.length;
-    const progress = totalDoctorWaiting > 0 ? Math.max(10, Math.round(((totalDoctorWaiting - ahead) / totalDoctorWaiting) * 100)) : 50;
-
+    const total    = doctorWaiting.length;
+    const progress = total > 0 ? Math.max(10, Math.round(((total - ahead) / total) * 100)) : 50;
     return { ahead, time, progress, expectedTurn };
   };
 
-  // Get current active token for the department of the selected token
   const getActiveDeptToken = (deptId: string) => {
     if (myToken && trackedTokenId === selectedToken?.id && currentServingToken) {
       return currentServingToken.token_number;
     }
-
     const called = tokens.find(t => t.departmentId === deptId && t.status === TokenStatus.CALLED);
     if (called) return called.tokenNumber;
-    
-    // Fallback to last completed
-    const completed = tokens
+    const done = tokens
       .filter(t => t.departmentId === deptId && t.status === TokenStatus.COMPLETED)
-      .sort((a, b) => new Date(b.completedAt || "").getTime() - new Date(a.completedAt || "").getTime())[0];
-    
-    return completed ? `${completed.tokenNumber} (Done)` : "None Active";
+      .sort((a, b) => new Date(b.completedAt || '').getTime() - new Date(a.completedAt || '').getTime())[0];
+    return done ? `${done.tokenNumber} (Done)` : 'None active';
   };
 
   const stats = selectedToken ? getQueueStats(selectedToken) : null;
 
+  // ── Status colour helpers ─────────────────────────────────────────────────
+  const statusColor = (s: TokenStatus) => {
+    if (s === TokenStatus.CALLED)    return 'var(--color-sage-600)';
+    if (s === TokenStatus.COMPLETED) return 'var(--color-charcoal-400)';
+    if (s === TokenStatus.SKIPPED || s === TokenStatus.CANCELLED) return 'var(--color-terra-600)';
+    return 'var(--color-charcoal-600)';
+  };
+  const statusLabel = (s: TokenStatus) => {
+    if (s === TokenStatus.WAITING)   return 'Waiting';
+    if (s === TokenStatus.CALLED)    return 'Called — Go Now';
+    if (s === TokenStatus.COMPLETED) return 'Completed';
+    if (s === TokenStatus.SKIPPED)   return 'Skipped';
+    if (s === TokenStatus.CANCELLED) return 'Cancelled';
+    return s;
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center p-4 sm:p-6 select-none font-sans pb-16">
-      {/* Container wrapper mimicking modern mobile app layout */}
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden flex flex-col min-h-[680px]">
-        
-        {/* Mobile App Header */}
-        <div className="bg-slate-900 text-white p-5 relative">
-          <div className="flex justify-between items-center mb-4">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-blue-600 rounded-xl text-white">
-                <HeartPulse className="h-5 w-5" />
-              </div>
-              <div>
-                <h1 className="text-sm font-semibold tracking-tight">{settings.hospitalInfo.name}</h1>
-                <p className="text-[10px] text-slate-400">Patient Live Tracker</p>
-              </div>
+    <div style={{
+      minHeight: '100vh',
+      background: 'var(--color-cream-100)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      padding: '1.5rem 1rem 4rem',
+      fontFamily: 'var(--font-sans)',
+    }}>
+      {/* Card shell — mimics a mobile app */}
+      <div style={{
+        width: '100%', maxWidth: 420,
+        background: '#fff',
+        borderRadius: '1.25rem',
+        border: '1px solid var(--color-cream-200)',
+        boxShadow: '0 4px 24px rgba(32,33,36,0.08)',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 640,
+      }}>
+
+        {/* ── App-style header ───────────────────────────────────────────── */}
+        <div style={{
+          background: 'var(--color-forest-700)',
+          padding: '1.1rem 1.25rem 1rem',
+          color: '#fff',
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem' }}>
+            <div>
+              <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: '#fff' }}>
+                {settings.hospitalInfo.name}
+              </p>
+              <p style={{ margin: 0, fontSize: '0.6rem', color: 'rgba(255,255,255,0.45)', marginTop: '0.1rem' }}>
+                Patient Live Tracker
+              </p>
             </div>
-            
-            <button 
+            <button
               onClick={handleRefresh}
-              className="p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-300 hover:text-white transition-all"
-              title="Refresh Queue State"
+              title="Refresh"
+              style={{
+                width: 32, height: 32, borderRadius: '50%', border: 'none',
+                background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)',
+                cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
             >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw style={{ width: 14, height: 14 }} className={isRefreshing ? 'animate-spin' : ''} />
             </button>
           </div>
 
-          <form onSubmit={handleSearch} className="relative mt-2">
+          {/* Search bar */}
+          <form onSubmit={handleSearch} style={{ position: 'relative' }}>
+            <Search style={{
+              position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)',
+              width: 14, height: 14, color: 'rgba(255,255,255,0.35)', pointerEvents: 'none',
+            }} />
             <input
               type="text"
-              placeholder="Enter your Token (e.g. GEN-002)"
+              placeholder="Enter your token (e.g. GEN-002)"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-800/80 border border-slate-700 rounded-2xl pl-11 pr-4 py-3 text-sm text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+              onChange={e => setSearchQuery(e.target.value)}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'rgba(255,255,255,0.1)',
+                border: '1px solid rgba(255,255,255,0.15)',
+                borderRadius: '0.6rem',
+                padding: '0.6rem 5.5rem 0.6rem 2.25rem',
+                fontSize: '0.75rem', color: '#fff', outline: 'none',
+                fontFamily: 'var(--font-sans)',
+              }}
             />
-            <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-              <Search className="h-4.5 w-4.5" />
-            </div>
-            <button 
+            <button
               type="submit"
-              className="absolute right-2 top-2 px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition-colors"
+              style={{
+                position: 'absolute', right: '0.3rem', top: '50%', transform: 'translateY(-50%)',
+                padding: '0.3rem 0.7rem', fontSize: '0.65rem', fontWeight: 700,
+                background: 'var(--color-sage-600)', border: 'none',
+                borderRadius: '0.4rem', color: '#fff', cursor: 'pointer',
+              }}
             >
               Track
             </button>
           </form>
 
           {errorMsg && (
-            <p className="text-xs text-red-400 mt-2 flex items-center gap-1">
-              <AlertCircle className="h-3 w-3" />
+            <p style={{ margin: '0.5rem 0 0', fontSize: '0.65rem', color: 'var(--color-terra-200)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+              <AlertCircle style={{ width: 12, height: 12, flexShrink: 0 }} />
               {errorMsg}
             </p>
           )}
         </div>
 
-        {/* Info Banner if Queue is Paused */}
+        {/* ── Queue paused banner ────────────────────────────────────────── */}
         {settings.isPaused && (
-          <div className="bg-amber-50 border-y border-amber-100 text-amber-800 px-4 py-2.5 text-xs text-center flex items-center justify-center gap-1.5">
-            <AlertCircle className="h-4 w-4 text-amber-500 animate-pulse" />
-            <span className="font-medium">Queue is currently on hold. Please bear with us.</span>
+          <div style={{
+            background: 'var(--color-terra-50)', borderBottom: '1px solid var(--color-terra-200)',
+            padding: '0.5rem 1rem', fontSize: '0.65rem', color: 'var(--color-terra-700)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem', fontWeight: 500,
+          }}>
+            <AlertCircle style={{ width: 12, height: 12, flexShrink: 0 }} />
+            Queue is currently on hold. Please bear with us.
           </div>
         )}
 
-        {/* Tracking Body */}
-        <div className="flex-1 p-5 space-y-5 overflow-y-auto">
+        {/* ── Body ──────────────────────────────────────────────────────── */}
+        <div style={{ flex: 1, padding: '1.1rem 1.25rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
           {selectedToken ? (
             <>
-              {/* Token Ticket Status Card */}
-              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full -translate-x-4 -translate-y-4"></div>
-                
-                <div className="flex justify-between items-start">
+              {/* Token ticket */}
+              <div style={{
+                background: 'var(--color-cream-50)',
+                border: '1px solid var(--color-cream-200)',
+                borderRadius: '0.75rem',
+                padding: '0.9rem 1rem',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div>
-                    <span className="inline-block px-2.5 py-0.5 bg-blue-100 text-blue-800 font-semibold text-[10px] rounded-full uppercase tracking-wider">
+                    <span style={{
+                      display: 'inline-block', fontSize: '0.55rem', fontWeight: 700,
+                      textTransform: 'uppercase', letterSpacing: '0.07em',
+                      padding: '0.15rem 0.5rem', borderRadius: '2rem',
+                      background: 'var(--color-sage-100)', color: 'var(--color-sage-800)',
+                    }}>
                       {selectedToken.departmentName}
                     </span>
-                    <h4 className="text-sm font-bold text-slate-900 mt-1">{selectedToken.patientName}</h4>
-                    <p className="text-xs text-slate-500">{selectedToken.doctorName}</p>
+                    <p style={{ margin: '0.35rem 0 0.1rem', fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-charcoal-900)' }}>
+                      {selectedToken.patientName}
+                    </p>
+                    <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--color-charcoal-400)' }}>
+                      {selectedToken.doctorName}
+                    </p>
                   </div>
 
-                  <div className="text-right">
-                    <p className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Your Token</p>
-                    <div className="text-2xl font-display font-extrabold text-blue-600 tracking-tight">
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ margin: '0 0 0.1rem', fontSize: '0.55rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--color-charcoal-300)' }}>
+                      Your Token
+                    </p>
+                    <span className="text-token" style={{
+                      fontSize: '1.6rem', fontWeight: 800, letterSpacing: '-0.03em',
+                      color: 'var(--color-forest-700)',
+                    }}>
                       {selectedToken.tokenNumber}
-                    </div>
+                    </span>
                   </div>
                 </div>
 
-                <div className="mt-4 pt-3 border-t border-slate-200/60 flex justify-between items-center text-xs">
-                  <span className="text-slate-500 flex items-center gap-1">
-                    <Smartphone className="h-3.5 w-3.5 text-slate-400" />
+                <div style={{
+                  marginTop: '0.75rem', paddingTop: '0.6rem',
+                  borderTop: '1px solid var(--color-cream-200)',
+                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                  fontSize: '0.62rem', color: 'var(--color-charcoal-400)',
+                }}>
+                  <span style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <Smartphone style={{ width: 11, height: 11 }} />
                     {selectedToken.patientMobile}
                   </span>
-                  <span className="text-slate-500">
-                    Age: {selectedToken.patientAge} • {selectedToken.patientGender}
-                  </span>
+                  <span>Age {selectedToken.patientAge} · {selectedToken.patientGender}</span>
+                </div>
+
+                {/* Status badge */}
+                <div style={{
+                  marginTop: '0.6rem',
+                  display: 'inline-flex', alignItems: 'center', gap: '0.3rem',
+                  padding: '0.25rem 0.6rem', borderRadius: '2rem', fontSize: '0.6rem', fontWeight: 700,
+                  background: `${statusColor(selectedToken.status)}20`,
+                  color: statusColor(selectedToken.status),
+                  border: `1px solid ${statusColor(selectedToken.status)}40`,
+                  textTransform: 'uppercase', letterSpacing: '0.06em',
+                }}>
+                  <span style={{
+                    width: 5, height: 5, borderRadius: '50%',
+                    background: statusColor(selectedToken.status),
+                    display: 'inline-block',
+                  }} />
+                  {statusLabel(selectedToken.status)}
                 </div>
               </div>
 
-              {/* Status Visual Representation */}
+              {/* Waiting stats row */}
               {selectedToken.status === TokenStatus.WAITING && (
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="bg-blue-50/50 rounded-2xl p-3 border border-blue-100/30 flex flex-col justify-between text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Patients Ahead</span>
-                    <div className="flex items-baseline justify-center gap-1 mt-1">
-                      <span className="text-2xl font-display font-bold text-slate-900">{stats?.ahead}</span>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
+                  {[
+                    { icon: <Users style={{ width: 12, height: 12 }} />, label: 'Ahead', value: String(stats?.ahead ?? 0), accent: 'var(--color-charcoal-900)' },
+                    { icon: <Clock style={{ width: 12, height: 12 }} />, label: 'Est. Wait', value: `${stats?.time ?? 0} min`, accent: 'var(--color-sage-700)' },
+                    { icon: <Clock style={{ width: 12, height: 12 }} />, label: 'Your Turn', value: stats?.expectedTurn || '—', accent: 'var(--color-forest-700)' },
+                  ].map(card => (
+                    <div key={card.label} style={{
+                      background: 'var(--color-cream-50)',
+                      border: '1px solid var(--color-cream-200)',
+                      borderRadius: '0.6rem', padding: '0.6rem 0.5rem', textAlign: 'center',
+                    }}>
+                      <span style={{ fontSize: '0.5rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em', color: 'var(--color-charcoal-300)', display: 'block' }}>
+                        {card.label}
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem', marginTop: '0.2rem', color: 'var(--color-charcoal-400)', fontSize: '0.6rem' }}>
+                        {card.icon}
+                      </span>
+                      <span style={{ fontSize: '0.95rem', fontWeight: 800, color: card.accent, display: 'block', lineHeight: 1.1, marginTop: '0.15rem', fontVariantNumeric: 'tabular-nums' }}>
+                        {card.value}
+                      </span>
                     </div>
-                    <span className="text-[9px] text-slate-400 mt-1 flex items-center justify-center gap-1">
-                      <Users className="h-3 w-3 shrink-0" /> Ahead
-                    </span>
-                  </div>
-
-                  <div className="bg-teal-50/30 rounded-2xl p-3 border border-teal-100/30 flex flex-col justify-between text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Estimated Wait</span>
-                    <div className="flex items-baseline justify-center gap-1 mt-1">
-                      <span className="text-2xl font-display font-bold text-teal-600">{stats?.time}</span>
-                    </div>
-                    <span className="text-[9px] text-slate-400 mt-1 flex items-center justify-center gap-1">
-                      <Clock className="h-3 w-3 shrink-0" /> Minutes
-                    </span>
-                  </div>
-
-                  <div className="bg-indigo-50/40 rounded-2xl p-3 border border-indigo-100/30 flex flex-col justify-between text-center">
-                    <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Expected Turn</span>
-                    <div className="flex items-baseline justify-center gap-1 mt-1">
-                      <span className="text-xs font-display font-extrabold text-indigo-600 truncate w-full">{stats?.expectedTurn}</span>
-                    </div>
-                    <span className="text-[9px] text-slate-400 mt-1 flex items-center justify-center gap-1">
-                      <Clock className="h-3 w-3 shrink-0" /> Expected
-                    </span>
-                  </div>
+                  ))}
                 </div>
               )}
 
-              {/* Special Status Banners */}
+              {/* ── Status-specific banners ─────────────────────────────── */}
               {selectedToken.status === TokenStatus.CALLED && (
-                <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center space-y-2 animate-call-pulse">
-                  <CheckCircle className="h-8 w-8 text-green-600 mx-auto" />
-                  <h4 className="text-sm font-bold text-green-900">Your Token is Active!</h4>
-                  <p className="text-xs text-green-700">
-                    Please proceed immediately to <strong>{selectedToken.doctorName}'s</strong> consultation room.
+                <div style={{
+                  background: 'var(--color-sage-50)',
+                  border: '1px solid var(--color-sage-200)',
+                  borderRadius: '0.75rem', padding: '1rem', textAlign: 'center',
+                }}>
+                  <CheckCircle style={{ width: 28, height: 28, color: 'var(--color-sage-600)', margin: '0 auto 0.4rem' }} />
+                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-sage-900)' }}>
+                    It's your turn!
+                  </p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.65rem', color: 'var(--color-sage-700)' }}>
+                    Please proceed to <strong>{selectedToken.doctorName}'s</strong> consultation room now.
                   </p>
                 </div>
               )}
 
               {selectedToken.status === TokenStatus.COMPLETED && (
-                <div className="bg-slate-100 border border-slate-200 rounded-2xl p-4 text-center space-y-1">
-                  <CheckCircle className="h-8 w-8 text-slate-600 mx-auto" />
-                  <h4 className="text-sm font-bold text-slate-800">Visit Completed</h4>
-                  <p className="text-xs text-slate-500">
-                    Your session with {selectedToken.doctorName} was marked complete at{" "}
-                    {selectedToken.completedAt ? new Date(selectedToken.completedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'recently'}.
+                <div style={{
+                  background: 'var(--color-cream-50)',
+                  border: '1px solid var(--color-cream-200)',
+                  borderRadius: '0.75rem', padding: '1rem', textAlign: 'center',
+                }}>
+                  <CheckCircle style={{ width: 28, height: 28, color: 'var(--color-charcoal-300)', margin: '0 auto 0.4rem' }} />
+                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-charcoal-700)' }}>
+                    Visit completed
+                  </p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.65rem', color: 'var(--color-charcoal-400)' }}>
+                    Session with {selectedToken.doctorName} completed
+                    {selectedToken.completedAt
+                      ? ` at ${new Date(selectedToken.completedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                      : ''}
+                    .
                   </p>
                 </div>
               )}
 
               {(selectedToken.status === TokenStatus.SKIPPED || selectedToken.status === TokenStatus.CANCELLED) && (
-                <div className="bg-red-50 border border-red-100 rounded-2xl p-4 text-center space-y-1">
-                  <AlertCircle className="h-8 w-8 text-red-500 mx-auto animate-bounce" />
-                  <h4 className="text-sm font-bold text-red-800">Token {selectedToken.status === TokenStatus.SKIPPED ? 'Skipped' : 'Cancelled'}</h4>
-                  <p className="text-xs text-red-600">
-                    Please visit the main receptionist desk immediately to recall or re-register your token number.
+                <div style={{
+                  background: 'var(--color-terra-50)',
+                  border: '1px solid var(--color-terra-200)',
+                  borderRadius: '0.75rem', padding: '1rem', textAlign: 'center',
+                }}>
+                  <AlertCircle style={{ width: 28, height: 28, color: 'var(--color-terra-500)', margin: '0 auto 0.4rem' }} />
+                  <p style={{ margin: 0, fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-terra-800)' }}>
+                    Token {selectedToken.status === TokenStatus.SKIPPED ? 'skipped' : 'cancelled'}
+                  </p>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.65rem', color: 'var(--color-terra-600)' }}>
+                    Please visit the reception desk to recall or re-register your token.
                   </p>
                 </div>
               )}
 
-              {/* Department Status / Progress Bar */}
+              {/* ── Progress bar (waiting only) ─────────────────────────── */}
               {selectedToken.status === TokenStatus.WAITING && (
-                <div className="space-y-2 pt-2">
-                  <div className="flex justify-between items-center text-xs text-slate-500">
-                    <span>Department Active Running:</span>
-                    <span className="font-bold text-slate-800">{getActiveDeptToken(selectedToken.departmentId)}</span>
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--color-charcoal-400)', marginBottom: '0.35rem' }}>
+                    <span>Now serving:</span>
+                    <span style={{ fontWeight: 700, color: 'var(--color-charcoal-700)' }}>
+                      {getActiveDeptToken(selectedToken.departmentId)}
+                    </span>
                   </div>
-                  
-                  {/* Progress Line */}
-                  <div className="relative pt-1">
-                    <div className="overflow-hidden h-2.5 text-xs flex rounded-full bg-slate-100">
-                      <div 
-                        style={{ width: `${stats?.progress}%` }} 
-                        className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-600 transition-all duration-500"
-                      ></div>
-                    </div>
+                  <div style={{ height: 6, background: 'var(--color-cream-200)', borderRadius: 999, overflow: 'hidden' }}>
+                    <div style={{
+                      height: '100%', width: `${stats?.progress ?? 10}%`,
+                      background: 'linear-gradient(90deg, var(--color-sage-500), var(--color-forest-600))',
+                      borderRadius: 999, transition: 'width 0.6s ease',
+                    }} />
                   </div>
-                  <div className="flex justify-between text-[10px] text-slate-400 font-semibold tracking-wide uppercase">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.55rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--color-charcoal-300)', marginTop: '0.3rem' }}>
                     <span>Arrived</span>
                     <span>Waiting</span>
                     <span>In-Consultation</span>
@@ -423,79 +469,71 @@ export default memo(function PatientTracker({ tokens, settings, onBackToApp }: P
                 </div>
               )}
 
-              {/* Wayfinding directions helper */}
-              <div className="bg-slate-50 rounded-2xl p-3.5 border border-slate-100 flex items-start gap-2.5">
-                <MapPin className="h-4.5 w-4.5 text-blue-600 shrink-0 mt-0.5" />
+              {/* ── Wayfinding ──────────────────────────────────────────── */}
+              <div style={{
+                background: 'var(--color-cream-50)', border: '1px solid var(--color-cream-200)',
+                borderRadius: '0.6rem', padding: '0.65rem 0.75rem',
+                display: 'flex', alignItems: 'flex-start', gap: '0.5rem',
+              }}>
+                <MapPin style={{ width: 14, height: 14, color: 'var(--color-sage-600)', flexShrink: 0, marginTop: 1 }} />
                 <div>
-                  <h5 className="text-xs font-semibold text-slate-800">Where to wait?</h5>
-                  <p className="text-[11px] text-slate-500 mt-0.5">
-                    Please stay within the 2nd Floor General Waiting Lounge. Keep your notifications turned ON.
+                  <p style={{ margin: 0, fontSize: '0.65rem', fontWeight: 600, color: 'var(--color-charcoal-800)' }}>Where to wait?</p>
+                  <p style={{ margin: '0.15rem 0 0', fontSize: '0.6rem', color: 'var(--color-charcoal-400)' }}>
+                    Please stay in the General Waiting Lounge and keep notifications on.
                   </p>
                 </div>
               </div>
 
-              {/* High-fidelity Ticket Mock (QR Code display) */}
-              <div className="border border-dashed border-slate-200 rounded-2xl p-4 text-center space-y-2 bg-slate-50/50">
-                <p className="text-[10px] text-slate-400 uppercase font-semibold tracking-wider">Fast-Scan Reception Receipt</p>
-                
-                {/* Generates a beautiful vector QR mockup using styling */}
-                <div className="w-28 h-28 bg-white p-2 border border-slate-200 rounded-xl mx-auto flex items-center justify-center">
-                  <div className="grid grid-cols-5 gap-1.5 w-full h-full p-1">
-                    {/* Visual representation of a QR grid */}
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-50"></div>
-
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-50"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                    <div className="bg-slate-950 rounded-xs"></div>
-                  </div>
+              {/* ── Receipt mockup ──────────────────────────────────────── */}
+              <div style={{
+                border: '1px dashed var(--color-cream-300)', borderRadius: '0.75rem',
+                padding: '0.85rem 1rem', textAlign: 'center',
+                background: 'var(--color-cream-50)',
+              }}>
+                <p style={{ margin: '0 0 0.5rem', fontSize: '0.55rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-charcoal-300)' }}>
+                  Reception Receipt
+                </p>
+                {/* Stylised QR mock */}
+                <div style={{
+                  width: 80, height: 80, margin: '0 auto',
+                  background: '#fff', border: '1px solid var(--color-cream-200)',
+                  borderRadius: '0.5rem', padding: '0.4rem',
+                  display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 3,
+                }}>
+                  {[1,1,0,1,1, 1,0,1,0,1, 0,1,1,1,0, 1,0,0,1,1, 1,1,0,1,1].map((cell, i) => (
+                    <div key={i} style={{
+                      background: cell ? 'var(--color-charcoal-900)' : 'transparent',
+                      borderRadius: 1,
+                    }} />
+                  ))}
                 </div>
-                
-                <span className="inline-block text-[10px] font-mono text-slate-400">
-                  REF-{selectedToken.id.split('-')[1]}
+                <span style={{ display: 'inline-block', marginTop: '0.4rem', fontSize: '0.55rem', fontFamily: 'var(--font-mono)', color: 'var(--color-charcoal-300)' }}>
+                  REF-{selectedToken.id.split('-')[1] ?? selectedToken.id.substring(0, 8)}
                 </span>
               </div>
             </>
           ) : (
-            <div className="flex flex-col items-center justify-center py-16 text-center space-y-4">
-              <div className="p-4 bg-slate-100 rounded-full text-slate-400">
-                <Smartphone className="h-10 w-10" />
+            /* Empty state */
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem 1rem', gap: '0.75rem', textAlign: 'center' }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--color-cream-200)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Smartphone style={{ width: 24, height: 24, color: 'var(--color-charcoal-300)' }} />
               </div>
-              <div className="space-y-1 px-4">
-                <h4 className="text-base font-semibold text-slate-800">No active token loaded</h4>
-                <p className="text-xs text-slate-400">
-                  Search your unique token (e.g., GEN-001) in the top query bar to start real-time tracking.
-                </p>
-              </div>
+              <p style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-charcoal-700)' }}>No token loaded</p>
+              <p style={{ margin: 0, fontSize: '0.65rem', color: 'var(--color-charcoal-300)', maxWidth: 240 }}>
+                Search your token number above (e.g. GEN-001) to begin real-time tracking.
+              </p>
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="p-4 bg-slate-50 border-t border-slate-100/60 text-center text-[10px] text-slate-400">
+        {/* ── Footer ────────────────────────────────────────────────────── */}
+        <div style={{
+          padding: '0.6rem 1rem',
+          background: 'var(--color-cream-50)',
+          borderTop: '1px solid var(--color-cream-200)',
+          textAlign: 'center',
+          fontSize: '0.55rem', color: 'var(--color-charcoal-300)', fontWeight: 500,
+        }}>
           Powered by InclusyQ Smart Token Systems
         </div>
       </div>
@@ -503,10 +541,17 @@ export default memo(function PatientTracker({ tokens, settings, onBackToApp }: P
       {onBackToApp && (
         <button
           onClick={onBackToApp}
-          className="mt-6 text-xs text-slate-500 hover:text-slate-700 bg-white border border-slate-200 px-4 py-2 rounded-2xl shadow-sm hover:shadow-md transition-all font-semibold flex items-center gap-1.5"
+          style={{
+            marginTop: '1.25rem', padding: '0.55rem 1.1rem',
+            fontSize: '0.7rem', fontWeight: 600, cursor: 'pointer',
+            background: '#fff', border: '1px solid var(--color-cream-300)',
+            borderRadius: '0.5rem', color: 'var(--color-charcoal-500)',
+            display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+            boxShadow: '0 1px 4px rgba(32,33,36,0.06)',
+          }}
         >
-          Return to Hospital Operator Workspace
-          <ChevronRight className="h-4 w-4" />
+          Return to Hospital Workspace
+          <ChevronRight style={{ width: 14, height: 14 }} />
         </button>
       )}
     </div>

@@ -3,10 +3,21 @@
  *
  * API client with automatic JWT token refresh.
  * Features:
- * - Automatic token injection
- * - Auto-refresh on 401 errors
- * - BACKWARD COMPATIBLE: Falls back to x-operator-username if no token
+ * - Automatic token injection via authFetchState (module-level cache written
+ *   by AuthContext — NOT localStorage, which AuthContext never uses for tokens)
+ * - Auto-refresh on 401 errors via the HTTP-only refreshToken cookie
+ * - BACKWARD COMPATIBLE: Falls back to x-operator-username if no JWT token
+ *
+ * IMPORTANT: The access token is stored ONLY in:
+ *   1. React state (AuthContext.accessToken)
+ *   2. authFetchState.accessToken  ← module-level cache, readable here
+ * It is NOT stored in localStorage under any key.
+ * Previously this file read localStorage.getItem('accessToken') which always
+ * returned null, causing every request to go out unauthenticated and then
+ * blow up the session via window.location.href on the resulting 401.
  */
+
+import { authFetchState } from './authFetch';
 
 const API_BASE = '';
 
@@ -16,7 +27,7 @@ interface ApiClientOptions extends RequestInit {
 }
 
 /**
- * Make an authenticated API request with automatic token refresh
+ * Make an authenticated API request with automatic token refresh.
  */
 async function apiClient(
   endpoint: string,
@@ -24,72 +35,80 @@ async function apiClient(
 ): Promise<any> {
   const { skipAuth = false, useLegacyAuth = false, ...fetchOptions } = options;
 
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...fetchOptions.headers,
+    ...(fetchOptions.headers as Record<string, string> ?? {}),
   };
 
-  // Add authentication headers
+  // ── Attach auth headers ───────────────────────────────────────────────────
   if (!skipAuth) {
     if (useLegacyAuth) {
-      // Legacy authentication: x-operator-username header
-      const user = localStorage.getItem('user');
-      if (user) {
-        const parsedUser = JSON.parse(user);
-        headers['x-operator-username'] = parsedUser.username;
+      // Legacy: x-operator-username (kept for backward compatibility)
+      const raw = localStorage.getItem('user');
+      if (raw) {
+        try {
+          const u = JSON.parse(raw);
+          if (u?.username) headers['x-operator-username'] = u.username;
+        } catch { /* ignore */ }
       }
     } else {
-      // JWT authentication: Bearer token
-      const accessToken = localStorage.getItem('accessToken');
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
+      // JWT: read from module-level cache written by AuthContext.storeToken().
+      // AuthContext never writes to localStorage for the access token — it
+      // lives only in React state and this shared module-level object.
+      const token = authFetchState.accessToken;
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      } else {
+        // Graceful fallback to legacy header so unauthenticated requests
+        // still work during the brief window before AuthContext hydrates.
+        const raw = localStorage.getItem('user');
+        if (raw) {
+          try {
+            const u = JSON.parse(raw);
+            if (u?.username) headers['x-operator-username'] = u.username;
+          } catch { /* ignore */ }
+        }
       }
     }
   }
 
-  // First attempt
+  // ── First attempt ─────────────────────────────────────────────────────────
   let response = await fetch(API_BASE + endpoint, {
     ...fetchOptions,
     headers,
-    credentials: 'include', // Include cookies for refresh token
+    credentials: 'include', // send refreshToken HTTP-only cookie
   });
 
-  // If token expired (401), try to refresh and retry
+  // ── 401 handling: attempt a silent token refresh then retry ONCE ──────────
   if (response.status === 401 && !skipAuth && !useLegacyAuth) {
-    console.log('[apiClient] Token expired, attempting refresh...');
-
     const refreshResponse = await fetch('/api/auth/refresh', {
       method: 'POST',
       credentials: 'include',
     });
 
-    const refreshData = await refreshResponse.json();
+    let refreshData: any = {};
+    try { refreshData = await refreshResponse.json(); } catch { /* ignore */ }
 
     if (refreshData.success && refreshData.accessToken) {
-      // Update stored token
-      localStorage.setItem('accessToken', refreshData.accessToken);
-      
-      // Update user data if provided
+      // Write back into the shared cache so subsequent calls use the new token.
+      authFetchState.accessToken = refreshData.accessToken;
       if (refreshData.user) {
         localStorage.setItem('user', JSON.stringify(refreshData.user));
       }
 
-      // Retry original request with new token
+      // Retry the original request with the refreshed token.
       headers['Authorization'] = `Bearer ${refreshData.accessToken}`;
-
       response = await fetch(API_BASE + endpoint, {
         ...fetchOptions,
         headers,
         credentials: 'include',
       });
-
-      console.log('[apiClient] Token refreshed, request retried');
     } else {
-      // Refresh failed, redirect to login
-      console.warn('[apiClient] Token refresh failed, redirecting to login');
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('user');
-      window.location.href = '/';
+      // Refresh failed — clear the stale cache entry and throw so the caller
+      // (or AuthContext's auto-refresh) can show the login screen cleanly.
+      // DO NOT call window.location.href here — that causes a hard reload that
+      // destroys React state and bypasses AuthContext's session management.
+      authFetchState.accessToken = null;
       throw new Error('Session expired. Please log in again.');
     }
   }

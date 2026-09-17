@@ -47,6 +47,10 @@ export const authFetchState = {
 /**
  * Authenticated fetch — mirrors the standard fetch API.
  * Merges auth headers into the request automatically.
+ *
+ * Also injects Content-Type: application/json when the body is a string
+ * (i.e. the caller used JSON.stringify) and no Content-Type was provided,
+ * so callers don't need to remember to set it.
  */
 export async function authFetch(
   url: string,
@@ -54,12 +58,20 @@ export async function authFetch(
 ): Promise<Response> {
   const authHeaders = getAuthHeaders();
 
+  // Auto-inject Content-Type when body is a JSON string and caller omitted it
+  const callerHeaders = (options.headers ?? {}) as Record<string, string>;
+  const contentType: Record<string, string> =
+    typeof options.body === 'string' && !callerHeaders['Content-Type'] && !callerHeaders['content-type']
+      ? { 'Content-Type': 'application/json' }
+      : {};
+
   return fetch(url, {
     ...options,
     credentials: 'include',
     headers: {
+      ...contentType,
       ...authHeaders,
-      ...(options.headers as Record<string, string> ?? {}),
+      ...callerHeaders,
     },
   });
 }

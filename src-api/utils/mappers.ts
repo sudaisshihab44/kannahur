@@ -102,7 +102,7 @@ export function mapUser(r: any): ReceptionUser {
     departmentId: r.department_id,
     assignedDepartmentIds: r.assigned_department_ids || [],
     permissions: r.permissions || [],
-    password: r.password,
+    // password intentionally omitted — never send credentials to the browser
     isActive: r.is_active,
   };
 }

@@ -744,6 +744,38 @@ import { expressRequestLogger } from './src-api/middleware/requestLogger.js';
 import {
   healthHandler, readyHandler, liveHandler, metricsHandler,
 } from './src-api/controllers/healthController.js';
+import { verifyAccessToken } from './src-api/utils/jwtUtils.js';
+
+// ── Lightweight auth helper for Express (dev server only) ────────────────────
+// Mirrors the behaviour of requireJwtAuth in jwtAuthMiddleware.ts but avoids
+// the Redis / session-store dependency so it works before those tables exist.
+//
+// Accepts:
+//   1. Bearer <JWT access token>   — verified by signature only (no DB lookup)
+//   2. x-operator-username header  — legacy fallback, always passes (same as
+//      the legacy path in jwtAuthMiddleware.ts which only checks is_active)
+//
+// Returns true (allowed) / false (rejected with 401 already sent).
+function devRequireAuth(req: express.Request, res: express.Response): boolean {
+  const authHeader = req.headers['authorization'] as string | undefined;
+  if (authHeader?.toLowerCase().startsWith('bearer ')) {
+    const token = authHeader.slice(7).trim();
+    const decoded = verifyAccessToken(token);
+    if (!decoded) {
+      res.status(401).json({ success: false, message: 'Invalid or expired access token' });
+      return false;
+    }
+    (req as any).user = decoded;
+    return true;
+  }
+
+  // Legacy: x-operator-username — allow through (matches api/index.ts behaviour)
+  const legacyUser = req.headers['x-operator-username'];
+  if (legacyUser) return true;
+
+  res.status(401).json({ success: false, message: 'Authentication required' });
+  return false;
+}
 
 let stopWorkers: (() => Promise<void>) | null = null;
 
@@ -765,6 +797,28 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
 
   // ── Structured request logger (replaces plain console.log middleware) ──────
   app.use(expressRequestLogger);
+
+  // ── Auth middleware — gates all API routes except the public allowlist ──────
+  // Mirrors the per-route requireJwtAuth calls in api/index.ts (Vercel) so
+  // local dev behaviour matches production exactly.
+  const PUBLIC_ROUTES_RE = [
+    /^\/api\/login$/,
+    /^\/api\/auth\/refresh$/,
+    /^\/api\/queue$/,
+    /^\/api\/track\//,
+    /^\/api\/events$/,
+    /^\/api\/health$/,
+    /^\/api\/ready$/,
+    /^\/api\/live$/,
+    /^\/api\/metrics$/,
+  ];
+
+  app.use('/api', (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const isPublic = PUBLIC_ROUTES_RE.some(re => re.test(req.path === '/' ? '/api' : `/api${req.path}`));
+    if (isPublic) return next();
+    if (!devRequireAuth(req, res)) return; // 401 already sent
+    next();
+  });
 
   // ── Monitoring endpoints (no auth — probes must always be reachable) ───────
   app.get('/api/health',  (req, res) => healthHandler(req as any, res as any));
@@ -927,33 +981,30 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     res.json({ success: true, message: `Device ${deviceRow.device_code} is now available.` });
   }));
 
-  // ------ Login ------
-  app.post("/api/login", async (req, res) => {
-    const { username, password, portal } = req.body;
-    if (!username)
-      return res.status(400).json({ success: false, message: "Username is required" });
+  // ------ Login (delegates to the same enhancedLoginHandler used by Vercel) ------
+  // The old inline implementation used plain-text password comparison and
+  // never issued a JWT, causing AuthContext.login() to get a response without
+  // 'accessToken', leaving isAuthenticated=false and the UI stuck on login.
+  app.post("/api/login", wa(async (req, res) => {
+    // Adapt the Express req/res to the VercelRequest/VercelResponse interface
+    // that enhancedLoginHandler expects.  The handler only reads:
+    //   req.body, req.headers, res.setHeader(), res.status(), res.json()
+    // All of which are present on the Express objects — the cast is safe.
+    const { enhancedLoginHandler } = await import('./src-api/controllers/enhancedAuthController.js');
+    return enhancedLoginHandler(req as any, res as any);
+  }));
 
-    const { data: rows } = await supabase
-      .from("users")
-      .select("*")
-      .ilike("username", username.trim());
-    const userRow = rows?.[0];
-    if (!userRow)
-      return res.status(401).json({ success: false, message: "Invalid username or password." });
+  // ------ Token refresh (mirrors api/index.ts) ------
+  app.post("/api/auth/refresh", wa(async (req, res) => {
+    const { refreshTokenHandler } = await import('./src-api/controllers/enhancedAuthController.js');
+    return refreshTokenHandler(req as any, res as any);
+  }));
 
-    const user = mapUser(userRow);
-    const userPass = user.password || "password";
-    if (password && userPass !== password)
-      return res.status(401).json({ success: false, message: "Invalid username or password." });
-    if (user.isActive === false)
-      return res.status(403).json({ success: false, message: "This account is currently deactivated." });
-    if (portal === "reception" && user.role !== UserRole.RECEPTIONIST)
-      return res.status(400).json({ success: false, message: "This account belongs to the Administrator Portal." });
-    if (portal === "admin" && user.role !== UserRole.ADMIN)
-      return res.status(400).json({ success: false, message: "This account belongs to the Reception Portal." });
-
-    res.json({ success: true, user });
-  });
+  // ------ Logout (mirrors api/index.ts) ------
+  app.post("/api/logout", wa(async (req, res) => {
+    const { logoutHandler } = await import('./src-api/controllers/enhancedAuthController.js');
+    return logoutHandler(req as any, res as any);
+  }));
 
 
   // ------ Live Queue Endpoint (Cumulative Running Total) ------

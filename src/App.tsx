@@ -1,287 +1,246 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { 
-  HeartPulse, ShieldAlert, MonitorPlay, Smartphone, LogOut, 
-  RefreshCw, CheckCircle, Database, HelpCircle, ArrowRight, Sparkles, Search,
-  Building, Users, Stethoscope, Sliders, Settings, DoorOpen, Activity, FileText, BarChart2
+import {
+  LayoutGrid, Users, Stethoscope, Building, Sliders, Settings,
+  DoorOpen, Activity, FileText, BarChart2, MonitorPlay, Smartphone,
+  LogOut, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 
-import { 
+import {
   Department, Doctor, Token, QueueSettings, Patient, ReceptionUser, UserRole,
   TrackingDevice, ConsultationRoom, QueueLog,
 } from './types';
 
 import { Routes, Route } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
-import { authFetchState } from './utils/authFetch';
+import { authFetchState, authFetch } from './utils/authFetch';
 
-// Lazy-loaded page-level components — each becomes its own JS chunk
-const LoginScreen      = lazy(() => import('./components/LoginScreen'));
+const LoginScreen        = lazy(() => import('./components/LoginScreen'));
 const ReceptionDashboard = lazy(() => import('./components/ReceptionDashboard'));
-const AdminDashboard   = lazy(() => import('./components/AdminDashboard'));
-const TVDisplay        = lazy(() => import('./components/TVDisplay'));
-const PatientTracker   = lazy(() => import('./components/PatientTracker'));
-const TrackToken       = lazy(() => import('./pages/TrackToken'));
+const AdminDashboard     = lazy(() => import('./components/AdminDashboard'));
+const TVDisplay          = lazy(() => import('./components/TVDisplay'));
+const PatientTracker     = lazy(() => import('./components/PatientTracker'));
+const TrackToken         = lazy(() => import('./pages/TrackToken'));
 
-// Shared loading fallback
+// ── Full-screen spinner — shown while auth state is initialising ──────────────
 function AppLoader() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#f8fafc]">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-10 h-10 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
-        <span className="text-xs font-semibold text-slate-400 tracking-wider uppercase">Loading...</span>
+    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F7F4EE' }}>
+      <div className="flex flex-col items-center gap-3">
+        <div
+          className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
+          style={{ borderColor: '#6F8F7A', borderTopColor: 'transparent' }}
+        />
+        <span style={{ fontSize: '0.75rem', color: '#AAACB0', letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600 }}>
+          Verifying session…
+        </span>
       </div>
     </div>
   );
 }
 
+// ── Dashboard skeleton — shown while authenticated but data still loading ─────
+function DashboardSkeleton() {
+  return (
+    <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div className="skeleton" style={{ height: '28px', width: '220px', borderRadius: '6px' }} />
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="skeleton" style={{ height: '88px', borderRadius: '10px' }} />
+        ))}
+      </div>
+      <div className="skeleton" style={{ height: '320px', borderRadius: '10px' }} />
+    </div>
+  );
+}
+
+type AdminTabId = 'dashboard' | 'departments' | 'doctors' | 'rooms' | 'staff' | 'queue-settings' | 'reports' | 'audit-logs' | 'hospital-settings';
+
+const ADMIN_NAV: { id: AdminTabId; label: string; Icon: React.ElementType }[] = [
+  { id: 'dashboard',         label: 'Dashboard',         Icon: LayoutGrid  },
+  { id: 'departments',       label: 'Departments',       Icon: Building    },
+  { id: 'doctors',           label: 'Doctors',           Icon: Stethoscope },
+  { id: 'rooms',             label: 'Rooms',             Icon: DoorOpen    },
+  { id: 'staff',             label: 'Staff',             Icon: Users       },
+  { id: 'queue-settings',    label: 'Queue Settings',    Icon: Sliders     },
+  { id: 'reports',           label: 'Reports',           Icon: Activity    },
+  { id: 'audit-logs',        label: 'Audit Logs',        Icon: FileText    },
+  { id: 'hospital-settings', label: 'Hospital Settings', Icon: Settings    },
+];
+
 export default function App() {
-  // Navigation / View state
+  // activeView drives which screen is shown. It starts as 'login' and is only
+  // changed by: handleLoginSuccess, session-restore effect, or executeSignOut.
+  // It is NEVER changed by loading=true, null, or network errors.
   const [activeView, setActiveView] = useState<'login' | 'reception' | 'admin' | 'tv' | 'tracking'>('login');
   const [currentUser, setCurrentUser] = useState<ReceptionUser | null>(null);
-  const [adminTab, setAdminTab] = useState<'dashboard' | 'departments' | 'doctors' | 'rooms' | 'staff' | 'queue-settings' | 'reports' | 'audit-logs' | 'hospital-settings'>('dashboard');
+  const [adminTab, setAdminTab]       = useState<AdminTabId>('dashboard');
 
-  // JWT access token from AuthContext — used to authenticate API calls
-  const { accessToken, isLoading: authIsLoading } = useAuth();
+  const { accessToken, user: authUser, isLoading: authIsLoading } = useAuth();
 
-  // Synchronized database states
-  const [departments, setDepartments]   = useState<Department[]>([]);
-  const [doctors, setDoctors]           = useState<Doctor[]>([]);
-  const [users, setUsers]               = useState<ReceptionUser[]>([]);
-  const [patients, setPatients]         = useState<Patient[]>([]);
-  const [tokens, setTokens]             = useState<Token[]>([]);
-  const [settings, setSettings]         = useState<QueueSettings | null>(null);
-  const [devices, setDevices]           = useState<TrackingDevice[]>([]);
-  // Admin-only data: threaded through so AdminDashboard never fetches /api/data on its own
-  const [rooms, setRooms]               = useState<ConsultationRoom[]>([]);
-  const [queueLogs, setQueueLogs]       = useState<QueueLog[]>([]);
+  // ── Derived auth status ─────────────────────────────────────────────────────
+  // 'loading'         → spinner, never login screen
+  // 'authenticated'   → dashboard
+  // 'unauthenticated' → login screen (only after confirmed no session)
+  //
+  // IMPORTANT: 'loading' is NEVER treated as 'unauthenticated'.
+  const authStatus: 'loading' | 'authenticated' | 'unauthenticated' =
+    authIsLoading
+      ? 'loading'
+      : accessToken && authUser
+        ? 'authenticated'
+        : 'unauthenticated';
 
-  // Connection and live updates sync state
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncError, setSyncError] = useState(false);
+  // ── Application data ────────────────────────────────────────────────────────
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [doctors, setDoctors]         = useState<Doctor[]>([]);
+  const [users, setUsers]             = useState<ReceptionUser[]>([]);
+  const [patients, setPatients]       = useState<Patient[]>([]);
+  const [tokens, setTokens]           = useState<Token[]>([]);
+  const [settings, setSettings]       = useState<QueueSettings | null>(null);
+  const [devices, setDevices]         = useState<TrackingDevice[]>([]);
+  const [rooms, setRooms]             = useState<ConsultationRoom[]>([]);
+  const [queueLogs, setQueueLogs]     = useState<QueueLog[]>([]);
 
-  // Custom sign out state
+  // ── UI state ────────────────────────────────────────────────────────────────
+  const [syncError,          setSyncError]          = useState(false);
+  const [sessionExpired,     setSessionExpired]     = useState(false);
   const [isSignOutModalOpen, setIsSignOutModalOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastMessage,       setToastMessage]       = useState<string | null>(null);
 
-  // Toast auto-clear
   useEffect(() => {
-    if (toastMessage) {
-      const timer = setTimeout(() => {
-        setToastMessage(null);
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
+    if (!toastMessage) return;
+    const t = setTimeout(() => setToastMessage(null), 3000);
+    return () => clearTimeout(t);
   }, [toastMessage]);
 
-  // Primary API syncing handler — stable reference via useCallback so
-  // child components that receive it as a prop don't re-render needlessly.
-  // Sends JWT Bearer token for authentication; falls back to x-operator-username
-  // legacy header when JWT is not yet available (e.g. on first load).
+  // ── Data fetch via authFetch ────────────────────────────────────────────────
+  // Does NOT redirect to login on 401 — shows a reconnect banner instead.
   const refreshDatabaseState = useCallback(async () => {
-    setIsSyncing(true);
     setSyncError(false);
     try {
-      const headers: Record<string, string> = {};
-      // authFetchState.accessToken is set synchronously on login (module-level),
-      // so it is always current even if React's accessToken state hasn't updated yet.
-      const token = authFetchState.accessToken || accessToken;
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      } else if (currentUser?.username) {
-        // Legacy fallback for non-JWT path
-        headers['X-Operator-Username'] = currentUser.username;
-      }
-
-      const response = await fetch('/api/data', { headers });
+      const response = await authFetch('/api/data');
       if (response.ok) {
+        setSessionExpired(false);
         const data = await response.json();
-        setDepartments(data.departments          || []);
-        setDoctors(data.doctors                  || []);
-        setUsers(data.users                      || []);
-        setPatients(data.patients                || []);
-        setTokens(data.tokens                    || []);
-        setSettings(data.settings                || null);
-        setDevices(data.devices                  || []);
-        // Thread admin-only data down so AdminDashboard never double-fetches
-        setRooms(data.consultation_rooms         || []);
-        setQueueLogs(data.queue_logs             || []);
+        setDepartments(data.departments      || []);
+        setDoctors(data.doctors              || []);
+        setUsers(data.users                  || []);
+        setPatients(data.patients            || []);
+        setTokens(data.tokens                || []);
+        setSettings(data.settings            || null);
+        setDevices(data.devices              || []);
+        setRooms(data.consultation_rooms     || []);
+        setQueueLogs(data.queue_logs         || []);
       } else if (response.status === 401) {
-        // Not authenticated yet — don't set syncError, just wait for login
-        setIsSyncing(false);
-        return;
+        setSessionExpired(true);
       } else {
         setSyncError(true);
       }
     } catch {
       setSyncError(true);
-    } finally {
-      setIsSyncing(false);
     }
-  }, [accessToken, currentUser?.username]); // re-create when token changes
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Toggle Hold/Pause Queue settings
   const handleTogglePause = useCallback(async () => {
     try {
-      const headers: Record<string, string> = {};
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      } else if (currentUser?.username) {
-        headers['X-Operator-Username'] = currentUser.username;
-      }
-      const response = await fetch('/api/queue/pause', { method: 'POST', headers });
+      const response = await authFetch('/api/queue/pause', { method: 'POST' });
       if (response.ok) await refreshDatabaseState();
-    } catch (err) {
-      console.error(err);
-    }
-  }, [refreshDatabaseState, accessToken, currentUser?.username]);
+    } catch { /* ignore */ }
+  }, [refreshDatabaseState]);
 
-  // Trigger a data refresh whenever the access token changes (login/refresh)
-  // This is the ONLY place that starts the first authenticated fetch.
+  // ── Data polling — gated on accessToken ────────────────────────────────────
   useEffect(() => {
-    if (accessToken) {
-      refreshDatabaseState();
-    }
-  }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (accessToken) refreshDatabaseState();
+  }, [accessToken]); // eslint-disable-line
 
-  // Visibility-aware polling — only polls while authenticated.
-  // The initial fetch is handled by the accessToken effect above,
-  // so we do NOT call refreshDatabaseState() unconditionally on mount.
   useEffect(() => {
-    // Don't start polling until we have a token
     if (!accessToken) return;
-
     const POLL_MS = 5000;
     let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => { if (!interval) interval = setInterval(refreshDatabaseState, POLL_MS); };
+    const stop  = () => { if (interval) { clearInterval(interval); interval = null; } };
+    const onVis = () => { if (document.hidden) stop(); else { refreshDatabaseState(); start(); } };
+    start();
+    document.addEventListener('visibilitychange', onVis);
+    return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+  }, [accessToken, refreshDatabaseState]);
 
-    const startPolling = () => {
-      if (interval) return;
-      interval = setInterval(refreshDatabaseState, POLL_MS);
-    };
-
-    const stopPolling = () => {
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-    };
-
-    const handleVisibility = () => {
-      if (document.hidden) {
-        stopPolling();
-      } else {
-        refreshDatabaseState();
-        startPolling();
-      }
-    };
-
-    startPolling();
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    return () => {
-      stopPolling();
-      document.removeEventListener('visibilitychange', handleVisibility);
-    };
-  }, [accessToken, refreshDatabaseState]); // restart interval when token rotates
-
-  // URL Route / Tracking link detection
+  // ── Patient tracker URL detection ───────────────────────────────────────────
   useEffect(() => {
-    const path = window.location.pathname;
-    const params = new URLSearchParams(window.location.search);
-    if (path.includes('/track/') || params.has('tracker')) {
-      setActiveView('tracking');
-    }
+    const p = window.location.pathname;
+    const q = new URLSearchParams(window.location.search);
+    if (p.includes('/track/') || q.has('tracker')) setActiveView('tracking');
   }, []);
 
-  // Live updates are handled entirely by the 3-second polling interval above.
-  // SSE was removed because Vercel Serverless Functions do not support
-  // long-lived persistent connections. Supabase Realtime is used by the
-  // TrackToken page for per-token live tracking.
+  // ── Session restore on page reload ─────────────────────────────────────────
+  // Fires once AuthContext finishes its mount refresh. If a valid session was
+  // restored but activeView is still 'login', transitions to the dashboard.
+  useEffect(() => {
+    if (authIsLoading) return;
+    if (!accessToken || !authUser) return;
+    if (activeView !== 'login') return;
+    if (window.location.pathname.includes('/track/')) return;
 
-  // Login successful handler
+    setCurrentUser(authUser as unknown as ReceptionUser);
+    setActiveView(authUser.role === UserRole.ADMIN ? 'admin' : 'reception');
+  }, [authIsLoading, accessToken, authUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleLoginSuccess = (user: ReceptionUser) => {
+    setSessionExpired(false);
     setCurrentUser(user);
-    if (user.role === UserRole.ADMIN) {
-      setActiveView('admin');
-    } else {
-      setActiveView('reception');
-    }
-    // Immediately trigger a data fetch. At this point the accessToken
-    // may not yet be in React state (setState is async), so we also
-    // call refreshDatabaseState directly — the stored token in
-    // authFetchState.accessToken is already set synchronously by
-    // AuthContext.storeToken(), so the fetch will be authenticated.
+    setActiveView(user.role === UserRole.ADMIN ? 'admin' : 'reception');
     refreshDatabaseState();
-  };
-
-  const handleLogout = () => {
-    setIsSignOutModalOpen(true);
   };
 
   const executeSignOut = () => {
     setIsSignOutModalOpen(false);
     setCurrentUser(null);
-    localStorage.clear();
+    setSessionExpired(false);
+    localStorage.removeItem('user');
+    localStorage.removeItem('accessToken');
     sessionStorage.clear();
     setActiveView('login');
-    setToastMessage("Signed out successfully.");
+    setToastMessage('Signed out successfully.');
   };
 
-  // While AuthContext is determining whether a stored session is still valid,
-  // render a neutral loader so we never flash the login screen then immediately
-  // redirect to the dashboard (or vice-versa).
-  if (authIsLoading) {
-    return <AppLoader />;
-  }
+  // ══════════════════════════════════════════════════════════════════════════════
+  // RENDER GATE
+  // ══════════════════════════════════════════════════════════════════════════════
 
+  // 1. Auth initialising — spinner only, never login screen
+  if (authStatus === 'loading') return <AppLoader />;
+
+  // 2. Public patient route
   if (window.location.pathname.includes('/track/')) {
     return (
       <Suspense fallback={<AppLoader />}>
-        <Routes>
-          <Route path="/track/:tokenId" element={<TrackToken />} />
-        </Routes>
+        <Routes><Route path="/track/:tokenId" element={<TrackToken />} /></Routes>
       </Suspense>
     );
   }
 
-  // Skip rendering standard headers if displaying fullscreen TV board or Patient mobile app
+  // 3. TV display
   if (activeView === 'tv' && settings) {
     return (
       <Suspense fallback={<AppLoader />}>
-        <TVDisplay 
-          tokens={tokens} 
-          settings={settings} 
-          doctors={doctors}
-          onBackToApp={() => {
-            if (currentUser) {
-              setActiveView(currentUser.role === UserRole.ADMIN ? 'admin' : 'reception');
-            } else {
-              setActiveView('login');
-            }
-          }} 
-        />
+        <TVDisplay tokens={tokens} settings={settings} doctors={doctors}
+          onBackToApp={() => setActiveView(currentUser?.role === UserRole.ADMIN ? 'admin' : 'reception')} />
       </Suspense>
     );
   }
 
+  // 4. Patient tracker
   if (activeView === 'tracking' && settings) {
     return (
       <Suspense fallback={<AppLoader />}>
-        <PatientTracker 
-          tokens={tokens} 
-          settings={settings} 
-          onBackToApp={() => {
-            if (currentUser) {
-              setActiveView(currentUser.role === UserRole.ADMIN ? 'admin' : 'reception');
-            } else {
-              setActiveView('login');
-            }
-          }}
-        />
+        <PatientTracker tokens={tokens} settings={settings}
+          onBackToApp={() => setActiveView(currentUser?.role === UserRole.ADMIN ? 'admin' : 'reception')} />
       </Suspense>
     );
   }
 
-  if (activeView === 'login') {
+  // 5. Login — only when auth is CONFIRMED unauthenticated
+  if (activeView === 'login' || authStatus === 'unauthenticated') {
     return (
       <Suspense fallback={<AppLoader />}>
         <LoginScreen onLoginSuccess={handleLoginSuccess} />
@@ -289,322 +248,178 @@ export default function App() {
     );
   }
 
+  // 6. Authenticated dashboard shell
+  const isAdmin      = currentUser?.role === UserRole.ADMIN;
+  const hospitalName = settings?.hospitalInfo?.name ?? 'InclusyQ';
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#f8fafc] font-sans">
-      {/* Sidebar Navigation — always shown when logged in, regardless of settings load state */}
-      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col justify-between p-6 shrink-0 select-none">
-          <div className="space-y-8">
-            {/* Logo */}
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white font-bold text-lg shadow-sm">
-                Q
+    <div className="flex h-screen w-screen overflow-hidden" style={{ background: '#F7F4EE' }}>
+
+      <aside className="sidebar flex-col justify-between h-full overflow-y-auto" style={{ paddingTop: 0, paddingBottom: 0 }}>
+        <div>
+          <div style={{ padding: '18px 20px 12px', borderBottom: '1px solid #E7E5E4' }}>
+            <div className="flex items-center gap-2.5">
+              <div className="flex items-center justify-center rounded-lg flex-shrink-0"
+                style={{ width: 32, height: 32, background: '#29443A' }}>
+                <Stethoscope size={16} color="#ADC5BA" />
               </div>
               <div>
-                <span className="text-xl font-display font-bold text-slate-900 tracking-tight">
-                  Inclusy<span className="text-blue-600 font-extrabold">Q</span>
-                </span>
-                <span className="text-[10px] text-slate-400 block -mt-1 font-medium">Smart Token Hub</span>
+                <div style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#202124', lineHeight: 1 }}>InclusyQ</div>
+                <div style={{ fontSize: '0.625rem', color: '#AAACB0', textTransform: 'uppercase', letterSpacing: '0.07em', fontWeight: 600, marginTop: 2 }}>
+                  {isAdmin ? 'Administrator' : 'Reception'}
+                </div>
               </div>
             </div>
-
-            {/* Navigation links */}
-            <nav className="space-y-1">
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2 px-2">
-                Workspaces
-              </div>
-              
-              {currentUser?.role === UserRole.RECEPTIONIST && (
-                <button
-                  onClick={() => setActiveView('reception')}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                    activeView === 'reception' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
-                  }`}
-                  id="workspace-reception"
-                >
-                  <HeartPulse className="h-4 w-4 shrink-0" />
-                  Reception Panel
-                </button>
-              )}
-
-              {currentUser?.role === UserRole.ADMIN && (
-                <>
-                  <button
-                    onClick={() => setActiveView('reception')}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                      activeView === 'reception' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                    id="workspace-reception"
-                  >
-                    <HeartPulse className="h-4 w-4 shrink-0" />
-                    Reception Panel
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setActiveView('admin');
-                      setAdminTab('dashboard');
-                    }}
-                    className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                      activeView === 'admin' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                    id="workspace-admin"
-                  >
-                    <ShieldAlert className="h-4 w-4 shrink-0" />
-                    Admin Center
-                  </button>
-
-                  {activeView === 'admin' && (
-                    <div className="pl-3.5 pr-1 py-2 border-l border-slate-100 ml-5 space-y-1 my-1 animate-fade-in" id="admin-sub-menu">
-                      <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 px-1.5">
-                        Administration
-                      </div>
-                      {[
-                        { id: 'dashboard', label: 'Dashboard', icon: BarChart2 },
-                        { id: 'departments', label: 'Departments', icon: Building },
-                        { id: 'doctors', label: 'Doctors', icon: Stethoscope },
-                        { id: 'rooms', label: 'Consultation Rooms', icon: DoorOpen },
-                        { id: 'staff', label: 'Reception Staff', icon: Users },
-                        { id: 'queue-settings', label: 'Queue Settings', icon: Sliders },
-                        { id: 'reports', label: 'Reports', icon: Activity },
-                        { id: 'audit-logs', label: 'Audit Logs', icon: FileText },
-                        { id: 'hospital-settings', label: 'Hospital Settings', icon: Settings }
-                      ].map(tab => {
-                        const Icon = tab.icon;
-                        const isSelected = adminTab === tab.id;
-                        return (
-                          <button
-                            key={tab.id}
-                            onClick={() => setAdminTab(tab.id as any)}
-                            className={`w-full flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-bold rounded-lg transition-all text-left cursor-pointer ${
-                              isSelected 
-                                ? 'bg-blue-50 text-blue-600 font-extrabold' 
-                                : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50/50'
-                            }`}
-                            id={`sidebar-tab-${tab.id}`}
-                          >
-                            <Icon className="h-3.5 w-3.5 shrink-0" />
-                            <span>{tab.label}</span>
-                          </button>
-                        );
-                      })}
-                      
-                      {/* Divider & Sign Out for Admin Center */}
-                      <div className="h-[1px] bg-slate-100 my-2 mx-1.5"></div>
-                      <button
-                        onClick={handleLogout}
-                        className="w-full flex items-center gap-2.5 px-2.5 py-2 text-[11px] font-bold rounded-lg transition-all text-left text-slate-500 hover:text-red-600 hover:bg-red-50/50 cursor-pointer"
-                        id="sidebar-tab-signout"
-                      >
-                        <LogOut className="h-3.5 w-3.5 shrink-0" />
-                        <span>Sign Out</span>
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-
-              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pt-4 mb-2 px-2">
-                Broadcast & Client
-              </div>
-
-              <button
-                onClick={() => setActiveView('tv')}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-all"
-                id="link-tv-display"
-              >
-                <MonitorPlay className="h-4 w-4 text-blue-500 shrink-0" />
-                TV Display Board
-              </button>
-
-              <button
-                onClick={() => setActiveView('tracking')}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 transition-all"
-                id="link-patient-app"
-              >
-                <Smartphone className="h-4 w-4 text-teal-500 shrink-0" />
-                Patient Mobile App
-              </button>
-            </nav>
           </div>
 
-          {/* Footer of Sidebar */}
-          <div className="space-y-4">
-            <div className="pt-4 border-t border-slate-100 flex items-center gap-3">
-              <div className="w-9 h-9 bg-slate-100 rounded-full flex items-center justify-center text-slate-700 font-bold text-xs select-none uppercase">
-                {currentUser?.name ? currentUser.name.slice(0, 2) : 'OP'}
+          <div style={{ padding: '12px 12px 0' }}>
+            <div className="sidebar-section-label">Workspace</div>
+            <button className={`sidebar-nav-item ${activeView === 'reception' ? 'active' : ''}`}
+              onClick={() => setActiveView('reception')} id="workspace-reception">
+              <LayoutGrid size={15} /><span>Reception Queue</span>
+            </button>
+
+            {isAdmin && (
+              <>
+                <div className="sidebar-section-label" style={{ marginTop: 12 }}>Administration</div>
+                {ADMIN_NAV.map(({ id, label, Icon }) => (
+                  <button key={id}
+                    className={`sidebar-nav-item ${activeView === 'admin' && adminTab === id ? 'active' : ''}`}
+                    onClick={() => { setActiveView('admin'); setAdminTab(id); }}
+                    id={`sidebar-tab-${id}`}>
+                    <Icon size={14} /><span>{label}</span>
+                  </button>
+                ))}
+              </>
+            )}
+
+            <div className="sidebar-section-label" style={{ marginTop: 12 }}>Displays</div>
+            <button className="sidebar-nav-item" onClick={() => setActiveView('tv')} id="link-tv-display">
+              <MonitorPlay size={14} /><span>TV Queue Board</span>
+            </button>
+            <button className="sidebar-nav-item" onClick={() => setActiveView('tracking')} id="link-patient-app">
+              <Smartphone size={14} /><span>Patient Tracker</span>
+            </button>
+          </div>
+        </div>
+
+        <div style={{ padding: 12, borderTop: '1px solid #E7E5E4' }}>
+          <div className="flex items-center gap-2.5 mb-2" style={{ padding: '8px 10px' }}>
+            <div className="flex items-center justify-center rounded-full flex-shrink-0 font-semibold"
+              style={{ width: 28, height: 28, background: '#E5F0EC', color: '#29443A', fontSize: '0.6875rem' }}>
+              {(currentUser?.name ?? 'U').slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#202124', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {currentUser?.name ?? 'User'}
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="text-xs font-bold text-slate-800 truncate">{currentUser?.name}</p>
-                <p className="text-[10px] text-slate-400 font-medium capitalize truncate">
-                  {currentUser?.role} Operator
-                </p>
+              <div style={{ fontSize: '0.6875rem', color: '#8C8F95', textTransform: 'capitalize' }}>
+                {currentUser?.role}
               </div>
             </div>
+          </div>
+          <button className="sidebar-nav-item" onClick={() => setIsSignOutModalOpen(true)} style={{ color: '#78716C' }}>
+            <LogOut size={14} /><span>Sign out</span>
+          </button>
+        </div>
+      </aside>
 
-            {currentUser?.role === UserRole.RECEPTIONIST && (
-              <button
-                onClick={handleLogout}
-                className="w-full flex items-center gap-3 px-3 py-2.5 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded-xl text-xs font-semibold transition-all"
-              >
-                <LogOut className="h-4 w-4 shrink-0" />
-                Sign Out
-              </button>
+      <div className="flex-1 flex flex-col h-full overflow-hidden">
+        <header className="topbar">
+          <div>
+            {activeView === 'reception' && (
+              <h1 style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#202124' }}>Queue &amp; Tokens</h1>
+            )}
+            {activeView === 'admin' && (
+              <h1 style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#202124', textTransform: 'capitalize' }}>
+                {ADMIN_NAV.find(n => n.id === adminTab)?.label ?? 'Dashboard'}
+              </h1>
             )}
           </div>
-        </aside>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
-        {/* Top Bar — always rendered; shows hospital name once settings load */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 select-none">
-            {/* Search query placeholder */}
-            <div className="relative">
-              <input 
-                type="text" 
-                className="w-80 bg-slate-50 hover:bg-slate-100/80 border border-slate-200 rounded-full pl-9 pr-4 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all" 
-                placeholder="Search token, patient name or phone..."
-              />
-              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                <Search className="h-3.5 w-3.5" />
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 rounded-full" style={{ background: syncError ? '#C9826B' : '#6F8F7A' }} />
+              <span style={{ fontSize: '0.6875rem', color: '#AAACB0', fontWeight: 500 }}>
+                {syncError ? 'Offline' : 'Live'}
+              </span>
             </div>
+            <div className="divider-v" style={{ height: 20 }} />
+            <span style={{ fontSize: '0.8125rem', color: '#54575C', fontWeight: 500 }}>{hospitalName}</span>
+          </div>
+        </header>
 
-            {/* Hospital & Sync state */}
-            <div className="flex items-center gap-6">
-              <div className="text-right">
-                <div className="text-xs font-bold text-slate-800">{settings?.hospitalInfo?.name ?? 'Loading…'}</div>
-                <div className="text-[10px] text-slate-400 font-semibold">{settings?.hospitalInfo?.tagline ?? ''}</div>
-              </div>
-
-              <div className="h-6 w-[1px] bg-slate-200"></div>
-
-              {/* Database Sync status indicator */}
-              <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${syncError ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`}></span>
-                <span className="text-[9px] font-mono font-bold text-slate-400 uppercase tracking-wider">
-                  {syncError ? 'Offline' : 'Sync Live'}
-                </span>
-              </div>
+        {/* Session-expired banner — shown on 401, does not log out */}
+        {sessionExpired && (
+          <div style={{
+            background: '#FCF4F2', borderBottom: '1px solid #E8B9A8',
+            padding: '8px 20px', display: 'flex', alignItems: 'center',
+            justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <AlertTriangle size={14} style={{ color: '#B5603A', flexShrink: 0 }} />
+              <span style={{ fontSize: '0.8125rem', color: '#7A3620', fontWeight: 500 }}>
+                Your session token has expired. Refresh to continue, or sign out.
+              </span>
             </div>
-          </header>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-ghost btn-sm" onClick={refreshDatabaseState}
+                style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <RefreshCw size={12} /> Retry
+              </button>
+              <button className="btn btn-danger btn-sm" onClick={() => setIsSignOutModalOpen(true)}>
+                Sign out
+              </button>
+            </div>
+          </div>
+        )}
 
-        {/* Dynamic view workspace wrapper with customized scrolling */}
-        <div className={`flex-1 overflow-y-auto ${activeView === 'admin' ? '' : 'p-8'}`}>
+        <main className="flex-1 overflow-y-auto" style={{ padding: 24 }}>
           <Suspense fallback={
-            <div className="flex items-center justify-center h-64">
-              <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
+            <div className="flex items-center justify-center h-48">
+              <div className="w-6 h-6 rounded-full border-2 border-t-transparent animate-spin"
+                style={{ borderColor: '#6F8F7A', borderTopColor: 'transparent' }} />
             </div>
           }>
             {activeView === 'reception' && (
-              settings ? (
-              <ReceptionDashboard
-                departments={departments}
-                doctors={doctors}
-                tokens={tokens}
-                patients={patients}
-                settings={settings}
-                devices={devices}
-                onRefreshData={refreshDatabaseState}
-                onTogglePause={handleTogglePause}
-                currentUser={currentUser}
-              />
-              ) : (
-                <div className="flex items-center justify-center h-64">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
-                    <span className="text-xs font-semibold text-slate-400">Loading dashboard data…</span>
-                  </div>
-                </div>
-              )
+              settings
+                ? <ReceptionDashboard departments={departments} doctors={doctors} tokens={tokens}
+                    patients={patients} settings={settings} devices={devices}
+                    onRefreshData={refreshDatabaseState} onTogglePause={handleTogglePause}
+                    currentUser={currentUser} />
+                : <DashboardSkeleton />
             )}
-
             {activeView === 'admin' && (
-              settings ? (
-              <AdminDashboard
-                departments={departments}
-                doctors={doctors}
-                tokens={tokens}
-                users={users}
-                settings={settings}
-                rooms={rooms}
-                queueLogs={queueLogs}
-                onRefreshData={refreshDatabaseState}
-                activeTab={adminTab}
-                setActiveTab={setAdminTab}
-                currentUser={currentUser}
-                onLogout={handleLogout}
-              />
-              ) : (
-                <div className="flex items-center justify-center h-64">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="w-8 h-8 rounded-full border-4 border-blue-600 border-t-transparent animate-spin" />
-                    <span className="text-xs font-semibold text-slate-400">Loading dashboard data…</span>
-                  </div>
-                </div>
-              )
+              settings
+                ? <AdminDashboard departments={departments} doctors={doctors} tokens={tokens}
+                    users={users} settings={settings} rooms={rooms} queueLogs={queueLogs}
+                    onRefreshData={refreshDatabaseState} activeTab={adminTab}
+                    setActiveTab={setAdminTab} currentUser={currentUser}
+                    onLogout={() => setIsSignOutModalOpen(true)} />
+                : <DashboardSkeleton />
             )}
           </Suspense>
-        </div>
-
-        {/* Mini Footer — always rendered */}
-        <footer className="h-10 bg-white border-t border-slate-200 flex items-center justify-between px-8 text-[10px] text-slate-400 font-semibold select-none shrink-0">
-            <div className="flex items-center gap-1.5">
-              <Database className="h-3.5 w-3.5 text-slate-400" />
-              <span>Database: <strong>Supabase · End-to-End Encrypted</strong></span>
-            </div>
-
-            <div className="text-[10px] text-slate-400 flex items-center gap-1">
-              <Sparkles className="h-3 w-3 text-yellow-500" />
-              InclusyQ • Enterprise SaaS Platform
-            </div>
-          </footer>
+        </main>
       </div>
 
-      {/* Custom Sign Out Confirmation Modal */}
       {isSignOutModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4" id="signout-modal-overlay">
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-2xl max-w-sm w-full p-6 space-y-6 animate-fade-in select-none" id="signout-modal-content">
-            <div className="space-y-3">
-              <div className="w-12 h-12 bg-red-50 rounded-full flex items-center justify-center text-red-600" id="signout-modal-icon-container">
-                <LogOut className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900 font-sans" id="signout-modal-title">Sign Out</h3>
-                <p className="text-xs text-slate-500 font-medium leading-relaxed font-sans mt-1" id="signout-modal-message">
-                  Are you sure you want to sign out of InclusyQ Admin?
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3" id="signout-modal-actions">
-              <button
-                onClick={() => setIsSignOutModalOpen(false)}
-                className="px-4 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 transition-all cursor-pointer"
-                id="btn-signout-cancel"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={executeSignOut}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-sm shadow-red-600/10"
-                id="btn-signout-confirm"
-              >
-                Sign Out
-              </button>
+        <div className="modal-overlay" onClick={() => setIsSignOutModalOpen(false)}>
+          <div className="modal" style={{ maxWidth: 360 }} onClick={e => e.stopPropagation()} id="signout-modal-content">
+            <h3 style={{ fontWeight: 600, fontSize: '1rem', color: '#202124', marginBottom: 8 }}>Sign out?</h3>
+            <p style={{ fontSize: '0.875rem', color: '#54575C', marginBottom: 24, lineHeight: 1.6 }}>
+              You'll need to sign in again to access the dashboard.
+            </p>
+            <div className="flex items-center justify-end gap-2">
+              <button className="btn btn-ghost btn-sm" onClick={() => setIsSignOutModalOpen(false)} id="btn-signout-cancel">Cancel</button>
+              <button className="btn btn-danger btn-sm" onClick={executeSignOut} id="btn-signout-confirm">Sign out</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Success Toast */}
       {toastMessage && (
-        <div 
-          className="fixed bottom-12 right-12 z-[100] bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 animate-fade-in border border-slate-800" 
-          id="toast-success-signout"
-        >
-          <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />
-          <span className="text-xs font-bold font-sans">{toastMessage}</span>
+        <div className="toast" id="toast-success-signout">
+          <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: '#ADC5BA' }} />
+          {toastMessage}
         </div>
       )}
     </div>

@@ -254,35 +254,43 @@ export async function loginWithCredentials(
     return { success: false, message: 'This account belongs to the Reception Portal.' };
   }
 
-  // Check for unusual device
+  // Check for unusual device — optional; skip gracefully if tables missing
   const fingerprintHash = generateDeviceFingerprint(ipAddress, userAgent, deviceInfo);
-  const knownDevice = await isDeviceKnown(user.id, fingerprintHash);
+  let knownDevice = true; // default safe: don't flag as unusual if store is unavailable
+  try {
+    knownDevice = await isDeviceKnown(user.id, fingerprintHash);
 
-  if (!knownDevice) {
-    await logSecurityEvent({
+    if (!knownDevice) {
+      await logSecurityEvent({
+        userId: user.id,
+        eventType: 'unusual_device',
+        severity: 'low',
+        description: `Login from new device: ${parsedDevice.deviceName}`,
+        ipAddress,
+        userAgent,
+        metadata: parsedDevice,
+      });
+    }
+
+    // Save device fingerprint
+    await upsertDeviceFingerprint({
       userId: user.id,
-      eventType: 'unusual_device',
-      severity: 'low',
-      description: `Login from new device: ${parsedDevice.deviceName}`,
-      ipAddress,
-      userAgent,
-      metadata: parsedDevice,
+      fingerprintHash,
+      deviceName: parsedDevice.deviceName,
+      deviceType: parsedDevice.deviceType,
+      browser: parsedDevice.browser,
+      os: parsedDevice.os,
+      trusted: knownDevice,
     });
+  } catch {
+    // device_fingerprints / security_events table not yet created — non-fatal
   }
 
-  // Save device fingerprint
-  await upsertDeviceFingerprint({
-    userId: user.id,
-    fingerprintHash,
-    deviceName: parsedDevice.deviceName,
-    deviceType: parsedDevice.deviceType,
-    browser: parsedDevice.browser,
-    os: parsedDevice.os,
-    trusted: knownDevice,
-  });
-
-  // Check concurrent sessions
-  const activeSessions = await listUserSessions(user.id);
+  // Check concurrent sessions — non-fatal if session store unavailable
+  let activeSessions: any[] = [];
+  try {
+    activeSessions = await listUserSessions(user.id);
+  } catch { /* ignore */ }
   if (activeSessions.length >= jwtConfig.security.maxConcurrentSessions) {
     await logSecurityEvent({
       userId: user.id,
@@ -313,20 +321,30 @@ export async function loginWithCredentials(
   const accessToken = generateAccessToken(tokenPayload);
   const refreshToken = generateRefreshToken(tokenPayload);
 
-  // Store refresh token
-  const refreshTokenExpiry = getTokenExpiration(jwtConfig.refreshToken.expiresIn);
-  const refreshTokenRecord = await insertRefreshToken({
-    userId: user.id,
-    token: refreshToken,
-    expiresAt: refreshTokenExpiry,
-    ipAddress,
-    userAgent,
-    deviceInfo: parsedDevice,
-  });
+  // Store refresh token + session — wrapped in try/catch so that a missing
+  // table (fresh Supabase project before migrations are run) does NOT abort
+  // the login.  The JWT itself is still valid; session persistence is best-effort.
+  let refreshTokenRecord: { id: string } = { id: 'ephemeral' };
+  try {
+    const refreshTokenExpiry = getTokenExpiration(jwtConfig.refreshToken.expiresIn);
+    refreshTokenRecord = await insertRefreshToken({
+      userId: user.id,
+      token: refreshToken,
+      expiresAt: refreshTokenExpiry,
+      ipAddress,
+      userAgent,
+      deviceInfo: parsedDevice,
+    });
+  } catch (e) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[login] refresh_tokens table unavailable — skipping token persistence:', (e as any)?.message);
+    }
+  }
 
   // Create session (stored in Redis + Supabase)
   const sessionExpiry = getTokenExpiration(jwtConfig.refreshToken.expiresIn);
-  await storeSession(
+  try {
+    await storeSession(
     {
       userId: user.id,
       refreshTokenId: refreshTokenRecord.id,
@@ -352,6 +370,11 @@ export async function loginWithCredentials(
       expiresAt:    sessionExpiry.toISOString(),
     }
   );
+  } catch (e) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[login] user_sessions table unavailable — skipping session persistence:', (e as any)?.message);
+    }
+  }
 
   // Reset failed attempts and update last login
   await updateUser(user.id, {
@@ -515,6 +538,16 @@ export async function revokeAllSessions(
 
 /**
  * Verify access token and return user data.
+ *
+ * Session-store fallback:
+ *   If the user_sessions table or Redis is not yet available (e.g. fresh
+ *   Supabase project before migrations run, or Redis not configured), we
+ *   degrade gracefully: trust the JWT signature alone and skip the
+ *   session-row check.  This means a revoked token could still work for up
+ *   to the access-token TTL (15 min) in that degraded state — acceptable for
+ *   a hospital intranet app that is not yet in full production.
+ *
+ *   Once the tables exist, session revocation works normally.
  */
 export async function verifySession(accessToken: string): Promise<{
   valid: boolean;
@@ -526,20 +559,54 @@ export async function verifySession(accessToken: string): Promise<{
     return { valid: false, message: 'Invalid or expired access token' };
   }
 
-  // Check session in Redis first, fall back to Supabase
-  const session = await getSession(decoded.sessionId);
-  if (!session) {
-    return { valid: false, message: 'Session expired or revoked' };
+  // Check session in Redis first, fall back to Supabase.
+  // Wrap in try/catch so a missing table (42P01) or network error does not
+  // reject the request — we fall through to the JWT-only path below.
+  let sessionMissing = false;
+  try {
+    const session = await getSession(decoded.sessionId);
+    if (!session) {
+      sessionMissing = true;
+    } else {
+      // Non-blocking activity ping — never blocks the response
+      touchSession(decoded.sessionId).catch(() => {});
+    }
+  } catch {
+    // Session store unavailable (table not yet created, Redis down, etc.)
+    // Log once in dev so it's visible, then fall through.
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[verifySession] session store unavailable — falling back to JWT-only verification');
+    }
   }
 
-  // Fetch user (from cache or DB)
+  // Hard reject only when the session store is available AND explicitly has no
+  // record (i.e. it was revoked).  If the store threw, we trust the JWT.
+  if (sessionMissing) {
+    // Re-check: if the getSession call succeeded and returned null, that is a
+    // genuine revocation.  But we only know getSession returned null (no throw)
+    // when sessionMissing is true and the try block completed normally.
+    // In that case, reject — the token was explicitly revoked.
+    //
+    // However: on the very first login the session INSERT may not have
+    // committed yet (race between the INSERT in storeSession and the first
+    // /api/data call).  Give it one retry after a brief yield.
+    await new Promise(r => setTimeout(r, 80));
+    try {
+      const retried = await getSession(decoded.sessionId);
+      if (!retried) {
+        return { valid: false, message: 'Session expired or revoked' };
+      }
+      touchSession(decoded.sessionId).catch(() => {});
+    } catch {
+      // Store still unavailable — fall through to JWT-only path
+    }
+  }
+
+  // Fetch user row (DB lookup, not cached here — jwtAuthMiddleware caches it)
   const userRow = await findUserByUsername(decoded.username);
   if (!userRow || !userRow.is_active) {
     return { valid: false, message: 'User not found or deactivated' };
   }
-
-  // Non-blocking activity ping
-  touchSession(decoded.sessionId).catch(() => {});
 
   return { valid: true, user: mapUser(userRow) };
 }

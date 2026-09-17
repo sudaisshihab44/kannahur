@@ -68,26 +68,39 @@ export async function csrfProtection(
   const origin = req.headers.origin || req.headers.referer;
   const allowedOrigins = [
     process.env.FRONTEND_URL,
+    process.env.APP_URL,
     process.env.COOKIE_DOMAIN,
     'http://localhost:3000',
     'http://localhost:5173', // Vite dev server
   ].filter(Boolean);
-  
-  // If origin is provided, validate it
+
+  // If origin is provided, validate it.
+  // Same-origin requests (e.g. Vite proxy, server-side fetches) carry no
+  // Origin header — treat absence as same-origin (allowed).
   if (origin) {
-    const originUrl = new URL(origin);
-    const isAllowed = allowedOrigins.some(allowed => {
-      if (!allowed) return false;
-      try {
-        const allowedUrl = new URL(allowed);
-        return originUrl.hostname === allowedUrl.hostname;
-      } catch {
-        return originUrl.hostname === allowed;
+    try {
+      const originUrl = new URL(origin);
+      const isAllowed = allowedOrigins.some(allowed => {
+        if (!allowed) return false;
+        try {
+          const allowedUrl = new URL(allowed.startsWith('http') ? allowed : `http://${allowed}`);
+          return originUrl.hostname === allowedUrl.hostname;
+        } catch {
+          return originUrl.hostname === allowed;
+        }
+      });
+
+      if (!isAllowed) {
+        console.warn(`⚠️  CSRF: Rejected request from origin: ${origin}`);
+        res.status(403).json({
+          success: false,
+          message: 'Invalid request origin',
+          code: 'INVALID_ORIGIN',
+        });
+        return false;
       }
-    });
-    
-    if (!isAllowed) {
-      console.warn(`⚠️  CSRF: Rejected request from origin: ${origin}`);
+    } catch {
+      // Malformed origin header — block it
       res.status(403).json({
         success: false,
         message: 'Invalid request origin',
@@ -96,6 +109,7 @@ export async function csrfProtection(
       return false;
     }
   }
+  // No origin header → same-origin request → pass through
   
   // Check for custom API header (prevents simple form-based CSRF)
   // Modern browsers require CORS preflight for custom headers

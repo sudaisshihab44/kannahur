@@ -1,736 +1,213 @@
-﻿import { authFetch } from '../utils/authFetch';
-import React, { useState } from 'react';
-import { 
-  Plus, Edit, Trash2, AlertCircle, Shield, User, Key, Check,
-  Search, SlidersHorizontal, RefreshCw, ChevronLeft, ChevronRight,
-  Info, Activity, Heart, CheckCircle2, MoreVertical, Sparkles, HelpCircle, ArrowRight, X
-} from 'lucide-react';
-import { ReceptionUser, Department, UserRole } from '../types';
+﻿import React, { useState, useMemo } from 'react';
+import { Search, PlusCircle, Pencil, Trash2, XCircle } from 'lucide-react';
+import { ReceptionUser, UserRole, Department } from '../types';
+import { authFetch } from '../utils/authFetch';
 
-interface StaffTabProps {
-  users: ReceptionUser[];
-  departments: Department[];
-  onRefreshData: () => Promise<void>;
-  currentUser?: ReceptionUser | null;
-}
+interface Props { users: ReceptionUser[]; departments: Department[]; onRefreshData: () => Promise<void>; currentUser?: ReceptionUser | null; }
 
-const AVAILABLE_PERMISSIONS = [
-  { key: 'register_patient', label: 'Register Patient' },
-  { key: 'generate_token', label: 'Generate Token' },
-  { key: 'set_priority', label: 'Assign Queue Priority' },
-  { key: 'call_token', label: 'Call Patient (Queue Duty)' },
-  { key: 'complete_token', label: 'Complete Patient' },
-  { key: 'skip_token', label: 'Skip Patient' },
-  { key: 'cancel_token', label: 'Cancel Token' },
-  { key: 'pause_queue', label: 'Pause/Resume Ticker' },
-  { key: 'manage_hospital', label: 'Hospital Settings Profile' }
+const ALL_PERMS = [
+  { id: 'register_patient', label: 'Register patients' },
+  { id: 'generate_token',   label: 'Generate tokens'  },
+  { id: 'set_priority',     label: 'Set priority'     },
+  { id: 'call_token',       label: 'Call token'       },
+  { id: 'complete_token',   label: 'Complete token'   },
+  { id: 'skip_token',       label: 'Skip token'       },
+  { id: 'cancel_token',     label: 'Cancel token'     },
+  { id: 'pause_queue',      label: 'Pause queue'      },
+  { id: 'manage_hospital',  label: 'Manage hospital'  },
 ];
 
-export default function StaffTab({
-  users,
-  departments,
-  onRefreshData,
-  currentUser
-}: StaffTabProps) {
-  // Modal / drawer state
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingUserId, setEditingUserId] = useState<string | null>(null);
+const DEFAULT_PERMS = ['register_patient','generate_token','call_token','complete_token'];
+const EMPTY_FORM = { username:'', name:'', role:'receptionist', departmentId:'', assignedDepartmentIds:[] as string[], password:'', permissions: DEFAULT_PERMS, isActive: true };
 
-  // Form fields
-  const [username, setUsername] = useState('');
-  const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<UserRole>(UserRole.RECEPTIONIST);
-  const [deptId, setDeptId] = useState('');
-  const [assignedDeptIds, setAssignedDeptIds] = useState<string[]>([]);
-  const [isDeptDropdownOpen, setIsDeptDropdownOpen] = useState(false);
-  const [deptSearch, setDeptSearch] = useState('');
-  const [password, setPassword] = useState('');
-  const [isActive, setIsActive] = useState(true);
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([
-    'register_patient', 'generate_token', 'call_token', 'complete_token'
-  ]);
+export default function StaffTab({ users, departments, onRefreshData, currentUser }: Props) {
+  const [search, setSearch]     = useState('');
+  const [roleF, setRoleF]       = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [editId, setEditId]     = useState<string | null>(null);
+  const [form, setForm]         = useState({ ...EMPTY_FORM });
+  const [saving, setSaving]     = useState(false);
+  const [error, setError]       = useState('');
+  const [deleteId, setDeleteId] = useState<string | null>(null);
 
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const filtered = useMemo(() => users.filter(u => {
+    if (roleF && u.role !== roleF) return false;
+    if (search && !u.name.toLowerCase().includes(search.toLowerCase()) && !u.username.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  }), [users, search, roleF]);
 
-  // Filter toolbar state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState<'all' | 'admin' | 'receptionist'>('all');
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const openAdd  = () => { setForm({ ...EMPTY_FORM, assignedDepartmentIds: [] }); setEditId(null); setError(''); setShowForm(true); };
+  const openEdit = (u: ReceptionUser) => {
+    setForm({ username: u.username, name: u.name, role: u.role, departmentId: u.departmentId ?? '', assignedDepartmentIds: u.assignedDepartmentIds ?? [], password: '', permissions: u.permissions ?? DEFAULT_PERMS, isActive: u.isActive ?? true });
+    setEditId(u.id); setError(''); setShowForm(true);
+  };
+  const closeForm = () => { setShowForm(false); setEditId(null); setError(''); };
 
-  // Success toast
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const showToast = (msg: string) => {
-    setToastMessage(msg);
-    setTimeout(() => {
-      setToastMessage(null);
-    }, 4000);
+  const togglePerm = (p: string) => {
+    setForm(f => ({
+      ...f,
+      permissions: f.permissions.includes(p) ? f.permissions.filter(x => x !== p) : [...f.permissions, p],
+    }));
   };
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await onRefreshData();
-    setIsRefreshing(false);
-    showToast('Staff directories synchronized');
+  const toggleDept = (id: string) => {
+    setForm(f => ({
+      ...f,
+      assignedDepartmentIds: f.assignedDepartmentIds.includes(id)
+        ? f.assignedDepartmentIds.filter(x => x !== id)
+        : [...f.assignedDepartmentIds, id],
+    }));
   };
 
-  const handleOpenCreateModal = () => {
-    setEditingUserId(null);
-    setUsername('');
-    setFullName('');
-    setRole(UserRole.RECEPTIONIST);
-    setDeptId('');
-    setAssignedDeptIds([]);
-    setIsDeptDropdownOpen(false);
-    setDeptSearch('');
-    setPassword('');
-    setIsActive(true);
-    setSelectedPermissions(['register_patient', 'generate_token', 'call_token', 'complete_token']);
-    setError('');
-    setIsFormOpen(true);
-  };
-
-  const handlePermissionChange = (permKey: string) => {
-    setSelectedPermissions(prev => 
-      prev.includes(permKey) 
-        ? prev.filter(k => k !== permKey) 
-        : [...prev, permKey]
-    );
-  };
-
-  const handleSaveStaff = async (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
-    if (!username || !fullName) {
-      setError('Username and full name are required');
-      return;
-    }
-
-    setSaving(true);
-    const url = editingUserId ? `/api/admin/users/${editingUserId}` : '/api/admin/users';
-    const method = editingUserId ? 'PUT' : 'POST';
-
-    const payload = {
-      username: username.toLowerCase().trim(),
-      name: fullName.trim(),
-      role,
-      departmentId: assignedDeptIds[0] || undefined,
-      assignedDepartmentIds: assignedDeptIds,
-      permissions: selectedPermissions,
-      isActive,
-      password: password || undefined
-    };
-
+    if (!form.username.trim() || !form.name.trim()) { setError('Username and name are required.'); return; }
+    if (!editId && !form.password) { setError('Password is required for new staff.'); return; }
+    setSaving(true); setError('');
     try {
-      const res = await fetch(url, {
-        method,
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-Operator-Username': currentUser?.username || 'admin'
-        },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) {
-        setIsFormOpen(false);
-        setEditingUserId(null);
-        setUsername('');
-        setFullName('');
-        setRole(UserRole.RECEPTIONIST);
-        setDeptId('');
-        setAssignedDeptIds([]);
-        setIsDeptDropdownOpen(false);
-        setDeptSearch('');
-        setPassword('');
-        setIsActive(true);
-        setSelectedPermissions(['register_patient', 'generate_token', 'call_token', 'complete_token']);
-        await onRefreshData();
-        showToast(editingUserId ? 'Staff parameters updated' : 'New clinical operator registered');
-      } else {
-        const d = await res.json();
-        setError(d.message || 'Error occurred while saving staff details');
-      }
-    } catch (err) {
-      setError('Failed server communication');
-    } finally {
-      setSaving(false);
-    }
+      const payload: any = { username: form.username, name: form.name, role: form.role, departmentId: form.departmentId || null, assignedDepartmentIds: form.assignedDepartmentIds, permissions: form.permissions, isActive: form.isActive };
+      if (form.password) payload.password = form.password;
+      const url = editId ? `/api/admin/staff/${editId}` : '/api/admin/staff';
+      const res = await authFetch(url, { method: editId ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (!res.ok) { setError(data.message ?? 'Failed.'); return; }
+      await onRefreshData(); closeForm();
+    } catch (err: any) { setError(err.message); } finally { setSaving(false); }
   };
 
-  const handleEditClick = (user: ReceptionUser) => {
-    setEditingUserId(user.id);
-    setUsername(user.username);
-    setFullName(user.name);
-    setRole(user.role);
-    setDeptId(user.departmentId || '');
-    setAssignedDeptIds(user.assignedDepartmentIds || (user.departmentId ? [user.departmentId] : []));
-    setIsDeptDropdownOpen(false);
-    setDeptSearch('');
-    setPassword('');
-    setIsActive(user.isActive !== false);
-    setSelectedPermissions(user.permissions || []);
-    setError('');
-    setIsFormOpen(true);
+  const handleDelete = async () => {
+    if (!deleteId) return;
+    await authFetch(`/api/admin/users/${deleteId}`, { method: 'DELETE' });
+    setDeleteId(null); await onRefreshData();
   };
-
-  const handleDeleteStaff = async (id: string) => {
-    if (id === 'user-1' || id === 'usr-1') {
-      alert("System chief admin account cannot be deleted.");
-      return;
-    }
-    if (!confirm("Are you sure you want to delete this staff user record permanently?")) return;
-    try {
-      const res = await authFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
-      if (res.ok) {
-        await onRefreshData();
-        showToast('Staff credentials revoked');
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // Derived Statistics
-  const totalStaff = users.length;
-  const activeStaff = users.filter(u => u.isActive !== false).length;
-  const adminCount = users.filter(u => u.role === UserRole.ADMIN).length;
-  const receptionistCount = users.filter(u => u.role === UserRole.RECEPTIONIST).length;
-  const totalPermissionsAssigned = users.reduce((acc, curr) => acc + (curr.permissions || []).length, 0);
-
-  // Filter and sort staff
-  const filteredUsers = users.filter(user => {
-    const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          user.username.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
-
-    return matchesSearch && matchesRole;
-  });
 
   return (
-    <div className="space-y-8 animate-fade-in" id="staff-tab-root">
-      
-      {/* Toast Alert */}
-      {toastMessage && (
-        <div className="fixed bottom-12 right-12 z-50 bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 animate-fade-in border border-slate-800" id="toast-success-staff">
-          <CheckCircle2 className="h-5 w-5 text-emerald-400 shrink-0" />
-          <span className="text-xs font-bold font-sans">{toastMessage}</span>
-        </div>
-      )}
-
-      {/* 5 Top KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4" id="staff-top-statistics">
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Staff</span>
-            <span className="text-2xl font-display font-extrabold text-slate-900 mt-1 block">{totalStaff}</span>
+    <div className="max-w-5xl space-y-5">
+      <div className="flex flex-wrap items-center gap-2 justify-between">
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <Search size={13} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#AAACB0' }} />
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search staff…" className="search-input" />
           </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Registered logons</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Active Accounts</span>
-            <span className="text-2xl font-display font-extrabold text-emerald-600 mt-1 block">{activeStaff}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Fully enabled access</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Administrators</span>
-            <span className="text-2xl font-display font-extrabold text-indigo-600 mt-1 block">{adminCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Full dashboard keys</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Receptionists</span>
-            <span className="text-2xl font-display font-extrabold text-slate-800 mt-1 block">{receptionistCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Desk operators</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between col-span-2 lg:col-span-1">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Permissions Scope</span>
-            <span className="text-2xl font-display font-extrabold text-blue-600 mt-1 block">{totalPermissionsAssigned}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Granular keys assigned</span>
-        </div>
-      </div>
-
-      {/* Header Block with Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4" id="staff-header-block">
-        <div>
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            <span>Admin Center</span>
-            <span>/</span>
-            <span className="text-slate-600">Receptionists & Admins</span>
-          </div>
-          <h2 className="text-2xl font-display font-extrabold text-slate-900 tracking-tight">Staff Credentials</h2>
-          <p className="text-xs text-slate-500 mt-1">Configure user login profiles, assigned clinics, and select direct granular system authorization permissions.</p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleOpenCreateModal}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-sm transition-all flex items-center gap-2 cursor-pointer"
-            id="btn-add-staff"
-          >
-            <Plus className="h-4 w-4 stroke-[3px]" />
-            <span>Add Desk Staff</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filter Toolbar */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm flex flex-col md:flex-row justify-between items-stretch md:items-center gap-3" id="staff-filter-toolbar">
-        <div className="relative flex-1 max-w-md">
-          <input
-            type="text"
-            placeholder="Search staff by full name or username..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-slate-50 hover:bg-slate-100/50 border border-slate-200 rounded-xl pl-9.5 pr-4 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:bg-white transition-all"
-            id="search-staff"
-          />
-          <Search className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400 h-full w-5" />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={roleFilter}
-            onChange={(e: any) => setRoleFilter(e.target.value)}
-            className="bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 focus:outline-none cursor-pointer"
-            id="select-staff-role-filter"
-          >
-            <option value="all">All Roles</option>
-            <option value="admin">Administrator</option>
-            <option value="receptionist">Receptionist</option>
+          <select value={roleF} onChange={e => setRoleF(e.target.value)} className="select" style={{ width: '130px' }}>
+            <option value="">All roles</option>
+            <option value="admin">Admin</option>
+            <option value="receptionist">Reception</option>
           </select>
-
-          <button
-            onClick={handleRefresh}
-            className={`p-2 rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-all cursor-pointer flex items-center justify-center ${
-              isRefreshing ? 'animate-spin text-blue-600' : ''
-            }`}
-            title="Refresh Staff Roster"
-          >
-            <RefreshCw className="h-4 w-4" />
-          </button>
         </div>
+        <button className="btn btn-primary btn-sm" onClick={openAdd}><PlusCircle size={13} /> Add staff</button>
       </div>
 
-      {/* Main Container */}
-      <div className="w-full" id="staff-main-grid">
-        
-        {/* Large Data Table */}
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between min-h-[400px]" id="staff-table-card">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse" id="staff-table">
-              <thead>
-                <tr className="bg-slate-50/70 border-b border-slate-100 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  <th className="py-4 px-6">Staff Member</th>
-                  <th className="py-4 px-6">Login Username ID</th>
-                  <th className="py-4 px-6">Assigned Department Focus</th>
-                  <th className="py-4 px-6">Assigned Permissions Count</th>
-                  <th className="py-4 px-6 text-center">Status</th>
-                  <th className="py-4 px-6 text-right rounded-r-lg">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-xs text-slate-700">
-                {filteredUsers.map(user => {
-                  const dept = departments.find(d => d.id === user.departmentId);
-                  const isUserActive = user.isActive !== false;
-                  
-                  return (
-                    <tr key={user.id} className="hover:bg-slate-50/40 transition-all group" id={`row-staff-${user.id}`}>
-                      <td className="py-4 px-6">
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-                            {user.role === UserRole.ADMIN ? (
-                              <Shield className="h-5 w-5 text-blue-600" />
-                            ) : (
-                              <User className="h-5 w-5 text-blue-600" />
-                            )}
-                          </div>
-                          <div>
-                            <span className="font-extrabold text-slate-900 text-[13px] block leading-snug">{user.name}</span>
-                            <span className="text-[10px] text-slate-400 block font-bold uppercase tracking-wider mt-0.5">
-                              {user.role}
-                            </span>
-                          </div>
-                        </div>
-                      </td>
-
-                      <td className="py-4 px-6">
-                        <span className="font-mono font-bold text-slate-800 bg-slate-50 px-2 py-0.5 rounded text-[11px]">
-                          @{user.username}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-6">
-                        <span className="font-bold text-slate-800">
-                          {user.role === UserRole.ADMIN ? (
-                            <span className="text-blue-600 font-extrabold">All Departments (Global)</span>
-                          ) : dept ? (
-                            dept.name
-                          ) : (
-                            <span className="text-slate-400 text-[10px]">Unassigned (Global Intake)</span>
-                          )}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-6 font-bold text-slate-700">
-                        {user.permissions ? (
-                          <span className="bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-lg text-xs font-mono">
-                            {user.permissions.length} Keys
-                          </span>
-                        ) : (
-                          <span className="text-slate-400">0 Keys</span>
-                        )}
-                      </td>
-
-                      <td className="py-4 px-6 text-center">
-                        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-extrabold border uppercase ${
-                          isUserActive
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-100' 
-                            : 'bg-rose-50 text-rose-700 border-rose-100'
-                        }`}>
-                          <span className={`h-1.5 w-1.5 rounded-full ${isUserActive ? 'bg-emerald-600' : 'bg-rose-600'}`}></span>
-                          {isUserActive ? 'Active' : 'Inactive'}
-                        </span>
-                      </td>
-
-                      <td className="py-4 px-6 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => handleEditClick(user)}
-                            className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-slate-50 rounded-lg transition-all cursor-pointer"
-                            title="Edit user profile"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                          
-                          <button
-                            onClick={() => handleDeleteStaff(user.id)}
-                            disabled={user.id === 'user-1' || user.id === 'usr-1'}
-                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer disabled:opacity-30 disabled:hover:bg-transparent"
-                            title="Delete staff record"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-
-                {filteredUsers.length === 0 && (
-                  <tr>
-                    <td colSpan={6} className="py-16 text-center text-slate-400 text-xs">
-                      <div className="flex flex-col items-center justify-center gap-2">
-                        <Info className="h-8 w-8 text-slate-300" />
-                        <span className="font-medium text-slate-500">No staff credentials match keywords.</span>
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        {filtered.length === 0 ? (
+          <div className="empty-state"><div style={{ fontWeight: 500 }}>No staff found</div></div>
+        ) : (
+          <table className="iq-table">
+            <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Department</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
+            <tbody>
+              {filtered.map(u => {
+                const dept = departments.find(d => d.id === u.departmentId);
+                const isSelf = u.id === currentUser?.id;
+                return (
+                  <tr key={u.id}>
+                    <td style={{ fontWeight: 500, color: '#202124' }}>
+                      {u.name}
+                      {isSelf && <span style={{ marginLeft: '6px', fontSize: '0.6875rem', color: '#8C8F95' }}>(you)</span>}
+                    </td>
+                    <td style={{ fontSize: '0.8125rem', color: '#54575C', fontFamily: 'monospace' }}>{u.username}</td>
+                    <td><span className={u.role === UserRole.ADMIN ? 'badge badge-emergency' : 'badge badge-active'}>{u.role}</span></td>
+                    <td style={{ color: '#54575C', fontSize: '0.8125rem' }}>{dept?.name ?? (u.assignedDepartmentIds?.length ? `${u.assignedDepartmentIds.length} dept` : '—')}</td>
+                    <td><span className={u.isActive === false ? 'badge badge-inactive' : 'badge badge-active'}>{u.isActive === false ? 'Inactive' : 'Active'}</span></td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button className="btn btn-ghost btn-sm" onClick={() => openEdit(u)}><Pencil size={12} /></button>
+                        {!isSelf && <button className="btn btn-ghost btn-sm" onClick={() => setDeleteId(u.id)} style={{ color: '#C9826B' }}><Trash2 size={12} /></button>}
                       </div>
                     </td>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Table Footer */}
-          <div className="p-5 bg-slate-50/60 border-t border-slate-100 flex flex-col sm:flex-row justify-between items-center gap-3">
-            <span className="text-[11px] text-slate-400 font-medium">
-              Showing <strong>{filteredUsers.length}</strong> of <strong>{users.length}</strong> registered staff login credentials
-            </span>
-
-            <div className="flex items-center gap-1">
-              <button disabled className="p-1.5 bg-white border border-slate-200 text-slate-400 rounded-lg text-xs font-semibold cursor-not-allowed">
-                <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-bold shadow-sm">1</button>
-              <button disabled className="p-1.5 bg-white border border-slate-200 text-slate-400 rounded-lg text-xs font-semibold cursor-not-allowed">
-                <ChevronRight className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        </div>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
-      {/* Slide-over Form Drawer */}
-      {isFormOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end" id="staff-slide-over">
-          
-          <div 
-            onClick={() => setIsFormOpen(false)}
-            className="absolute inset-0 bg-slate-900/40 backdrop-blur-xs transition-opacity duration-300"
-          />
-
-          <div className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col justify-between z-10 animate-fade-in border-l border-slate-100">
-            
-            {/* Header */}
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
-                  <Shield className="h-5 w-5 text-blue-600" />
-                  {editingUserId ? "Edit Staff User Profile" : "Add Clinical Staff"}
-                </h3>
-                <p className="text-[11px] text-slate-400 mt-0.5">Configure login profiles, security scopes & direct permissions</p>
-              </div>
-              
-              <button 
-                onClick={() => setIsFormOpen(false)}
-                className="p-1.5 hover:bg-slate-50 text-slate-400 hover:text-slate-900 rounded-xl transition-all cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
+      {showForm && (
+        <>
+          <div className="drawer-overlay" onClick={closeForm} />
+          <div className="drawer animate-slide-in-right">
+            <div className="drawer-header">
+              <h3 style={{ fontWeight: 600, fontSize: '0.9375rem', color: '#202124' }}>{editId ? 'Edit staff' : 'Add staff'}</h3>
+              <button onClick={closeForm} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#AAACB0' }}><XCircle size={16} /></button>
             </div>
-
-            {/* Form Fields body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 p-3.5 rounded-2xl text-xs flex items-start gap-2 animate-fade-in" id="staff-error-alert">
-                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span className="font-medium leading-relaxed">{error}</span>
-                </div>
-              )}
-
-              <form id="staff-slideover-form" className="space-y-4" onSubmit={handleSaveStaff}>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Username ID</label>
-                    <input
-                      type="text"
-                      placeholder="receptionistA"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      disabled={!!editingUserId}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 disabled:opacity-50"
-                      id="input-staff-username"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">User Role</label>
-                    <select
-                      value={role}
-                      onChange={(e) => setRole(e.target.value as UserRole)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 cursor-pointer font-bold animate-none"
-                      id="select-staff-role"
-                    >
-                      <option value={UserRole.RECEPTIONIST}>Receptionist</option>
-                      <option value={UserRole.ADMIN}>Administrator</option>
-                    </select>
-                  </div>
-                </div>
-
+            <div className="drawer-body">
+              {error && <div style={{ marginBottom: '16px', padding: '10px 12px', background: '#FCF4F2', border: '1px solid #E8B9A8', borderRadius: '8px', fontSize: '0.8125rem', color: '#7A3620' }}>{error}</div>}
+              <form id="staff-form" onSubmit={handleSave} className="space-y-4">
+                <div><label className="field-label">Full name *</label><input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="input" placeholder="Claire Redfield" /></div>
+                <div><label className="field-label">Username *</label><input value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value.toLowerCase() }))} className="input" placeholder="claire.r" disabled={!!editId} /></div>
+                <div><label className="field-label">{editId ? 'New password (leave blank to keep)' : 'Password *'}</label><input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} className="input" placeholder={editId ? '••••••••' : 'Set password'} /></div>
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Full Operator Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Sarah Connor"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    id="input-staff-fullname"
-                  />
+                  <label className="field-label">Role</label>
+                  <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} className="select">
+                    <option value="receptionist">Receptionist</option>
+                    <option value="admin">Administrator</option>
+                  </select>
                 </div>
-
-                {role === UserRole.RECEPTIONIST ? (
-                  <div className="relative">
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5 flex justify-between items-center">
-                      <span>Assigned Departments</span>
-                      {assignedDeptIds.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setAssignedDeptIds([])}
-                          className="text-[9px] text-rose-500 hover:text-rose-700 font-bold uppercase transition-colors cursor-pointer"
-                        >
-                          Clear All
-                        </button>
-                      )}
-                    </label>
-                    
-                    <button
-                      type="button"
-                      onClick={() => setIsDeptDropdownOpen(!isDeptDropdownOpen)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 flex justify-between items-center font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                      id="btn-dept-dropdown"
-                    >
-                      <span className="truncate">
-                        {assignedDeptIds.length === 0 
-                          ? 'Choose assigned departments...' 
-                          : `${assignedDeptIds.length} department(s) selected`}
-                      </span>
-                      <SlidersHorizontal className="h-4 w-4 text-slate-400 shrink-0" />
-                    </button>
-
-                    {/* Dropdown Menu */}
-                    {isDeptDropdownOpen && (
-                      <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-2xl shadow-xl p-3 space-y-2 max-h-60 overflow-y-auto" id="dept-dropdown-menu">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="Search departments..."
-                            value={deptSearch}
-                            onChange={(e) => setDeptSearch(e.target.value)}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/10"
-                            id="search-dept-dropdown"
-                          />
-                          <Search className="absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
-                        </div>
-
-                        <div className="space-y-1.5 pt-1">
-                          {departments
-                            .filter(d => d.name.toLowerCase().includes(deptSearch.toLowerCase()))
-                            .map(d => {
-                              const isChecked = assignedDeptIds.includes(d.id);
-                              return (
-                                <label
-                                  key={d.id}
-                                  className="flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 rounded-lg cursor-pointer text-xs font-semibold text-slate-700 select-none"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={() => {
-                                      if (isChecked) {
-                                        setAssignedDeptIds(prev => prev.filter(id => id !== d.id));
-                                      } else {
-                                        setAssignedDeptIds(prev => [...prev, d.id]);
-                                      }
-                                    }}
-                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/30 h-4 w-4 cursor-pointer"
-                                  />
-                                  <span>{d.name}</span>
-                                </label>
-                              );
-                            })}
-                          {departments.filter(d => d.name.toLowerCase().includes(deptSearch.toLowerCase())).length === 0 && (
-                            <div className="text-center text-[11px] text-slate-400 py-2">
-                              No matching departments
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Selected Departments Tags */}
-                    {assignedDeptIds.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-2 font-sans" id="assigned-dept-tags">
-                        {assignedDeptIds.map(id => {
-                          const dept = departments.find(d => d.id === id);
-                          if (!dept) return null;
-                          return (
-                            <span
-                              key={id}
-                              className="inline-flex items-center gap-1 bg-blue-50 border border-blue-100/60 text-blue-700 px-2.5 py-1 rounded-lg text-[10px] font-bold"
-                            >
-                              <span>{dept.name}</span>
-                              <button
-                                type="button"
-                                onClick={() => setAssignedDeptIds(prev => prev.filter(dId => dId !== id))}
-                                className="text-blue-500 hover:text-blue-700 cursor-pointer"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </span>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Assigned Station Department</label>
-                    <div className="bg-slate-50 border border-slate-100/80 rounded-xl px-3.5 py-2.5 text-xs text-slate-400 font-semibold cursor-not-allowed italic">
-                      Administrator has complete hospital access
-                    </div>
-                  </div>
-                )}
-
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                    {editingUserId ? "Reset Password (Optional)" : "Password Setup"}
-                  </label>
-                  <input
-                    type="password"
-                    placeholder={editingUserId ? "••••••••" : "Define password"}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/20 font-mono"
-                    id="input-staff-password"
-                  />
+                  <label className="field-label">Primary department</label>
+                  <select value={form.departmentId} onChange={e => setForm(f => ({ ...f, departmentId: e.target.value }))} className="select">
+                    <option value="">None (all departments)</option>
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
                 </div>
-
                 <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Granular Authorization Keys</label>
-                  <div className="bg-slate-50/50 p-3 rounded-2xl border border-slate-100 max-h-[160px] overflow-y-auto space-y-2">
-                    {AVAILABLE_PERMISSIONS.map(perm => {
-                      const checked = selectedPermissions.includes(perm.key);
-                      return (
-                        <div key={perm.key} className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            id={`chk-perm-${perm.key}`}
-                            checked={checked}
-                            onChange={() => handlePermissionChange(perm.key)}
-                            className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/30 h-4 w-4 cursor-pointer"
-                          />
-                          <label htmlFor={`chk-perm-${perm.key}`} className="text-xs text-slate-700 cursor-pointer select-none font-medium">
-                            {perm.label}
-                          </label>
-                        </div>
-                      );
-                    })}
+                  <label className="field-label" style={{ marginBottom: '8px' }}>Assigned departments</label>
+                  <div className="space-y-1.5">
+                    {departments.map(d => (
+                      <label key={d.id} className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={form.assignedDepartmentIds.includes(d.id)} onChange={() => toggleDept(d.id)} style={{ accentColor: '#6F8F7A', width: '14px', height: '14px' }} />
+                        <span style={{ fontSize: '0.8125rem', color: '#54575C' }}>{d.name}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
-
-                <div className="flex items-center gap-2.5 py-2 bg-slate-50/50 p-3 rounded-xl border border-slate-100">
-                  <input 
-                    type="checkbox"
-                    id="chk-staff-active"
-                    checked={isActive}
-                    onChange={(e) => setIsActive(e.target.checked)}
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500/30 h-4 w-4 cursor-pointer"
-                  />
-                  <div>
-                    <label htmlFor="chk-staff-active" className="text-xs font-bold text-slate-700 cursor-pointer">
-                      Activate Login Credentials
-                    </label>
-                    <span className="text-[10px] text-slate-400 block leading-tight">Revoking deactivates direct logins instantly.</span>
+                <div>
+                  <label className="field-label" style={{ marginBottom: '8px' }}>Permissions</label>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {ALL_PERMS.map(p => (
+                      <label key={p.id} className="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" checked={form.permissions.includes(p.id)} onChange={() => togglePerm(p.id)} style={{ accentColor: '#6F8F7A', width: '14px', height: '14px' }} />
+                        <span style={{ fontSize: '0.75rem', color: '#54575C' }}>{p.label}</span>
+                      </label>
+                    ))}
                   </div>
                 </div>
+                <label className="flex items-center gap-2.5 cursor-pointer">
+                  <input type="checkbox" checked={form.isActive} onChange={e => setForm(f => ({ ...f, isActive: e.target.checked }))} style={{ accentColor: '#6F8F7A', width: '14px', height: '14px' }} />
+                  <span style={{ fontSize: '0.8125rem', color: '#54575C' }}>Active account</span>
+                </label>
               </form>
             </div>
+            <div className="drawer-footer">
+              <button type="button" className="btn btn-ghost btn-sm" onClick={closeForm}>Cancel</button>
+              <button type="submit" form="staff-form" className="btn btn-primary btn-sm" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            </div>
+          </div>
+        </>
+      )}
 
-            {/* Footer */}
-            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setIsFormOpen(false)}
-                className="px-4 py-2 bg-white border border-slate-200 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-50 transition-all cursor-pointer"
-              >
-                Cancel
-              </button>
-
-              <button
-                type="submit"
-                form="staff-slideover-form"
-                disabled={saving}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
-                id="btn-save-staff"
-              >
-                {saving ? 'Saving...' : editingUserId ? 'Update operator' : 'Create operator'}
-              </button>
+      {deleteId && (
+        <div className="modal-overlay" onClick={() => setDeleteId(null)}>
+          <div className="modal" style={{ maxWidth: '360px' }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontWeight: 600, color: '#202124', marginBottom: '8px' }}>Remove staff member?</h3>
+            <p style={{ fontSize: '0.875rem', color: '#54575C', marginBottom: '24px' }}>This cannot be undone.</p>
+            <div className="flex justify-end gap-2">
+              <button className="btn btn-ghost btn-sm" onClick={() => setDeleteId(null)}>Cancel</button>
+              <button className="btn btn-danger btn-sm" onClick={handleDelete}>Remove</button>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 }

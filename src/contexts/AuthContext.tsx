@@ -182,12 +182,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // ── Session restore on mount ─────────────────────────────────────────────────
   // Attempt to restore the session from the HTTP-only refresh token cookie.
-  // This fires ONCE. If there is no valid cookie (first visit, cleared cookies,
-  // production JWT secrets changed) it sets isLoading=false and the user sees
-  // the login screen.
+  // This fires ONCE on mount (empty dep array).
+  //
+  // Hard timeout: if /api/auth/refresh does not resolve within 8 seconds
+  // (hung network, server cold-start, etc.) we set isLoading=false so the
+  // app never gets stuck on the spinner forever.  The access token remains
+  // null, so the app shows the login screen — the user can try again.
+  // This is NOT treated as a logout; localStorage user data is preserved.
   //
   // Optimistic: pre-populate the user display name from localStorage while
-  // the refresh is in-flight so the UI doesn't flash empty.
+  // the refresh is in-flight so the sidebar doesn't flash empty on restore.
 
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -199,7 +203,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    refreshToken().finally(() => setIsLoading(false));
+    // Race the refresh against an 8-second timeout.
+    // whichever settles first wins; the loser is a no-op.
+    let settled = false;
+
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      console.warn('[AuthContext] Session restore timed out after 8 s — showing login screen');
+      // Do NOT clear accessToken or user here.  The token is still null (never
+      // set), so isAuthenticated stays false.  We just unblock the UI.
+      setIsLoading(false);
+    }, 8000);
+
+    refreshToken().finally(() => {
+      if (settled) return; // timeout already fired
+      settled = true;
+      clearTimeout(timeoutId);
+      setIsLoading(false);
+    });
+
+    return () => clearTimeout(timeoutId);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Context value ────────────────────────────────────────────────────────────

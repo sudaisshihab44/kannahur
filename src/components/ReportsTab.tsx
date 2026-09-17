@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import { 
-  BarChart2, TrendingUp, Users, CheckCircle, Clock, AlertTriangle, 
-  Download, Calendar, Award, Activity, Heart, ShieldAlert,
-  ChevronDown, FileText, CheckCircle2, AlertCircle, Sparkles, HelpCircle
+import {
+  BarChart2, Download, Activity, Award, Clock
 } from 'lucide-react';
 import { Token, Doctor, Department, TokenStatus } from '../types';
 
@@ -12,14 +10,10 @@ interface ReportsTabProps {
   departments: Department[];
 }
 
-export default function ReportsTab({
-  tokens,
-  doctors,
-  departments
-}: ReportsTabProps) {
+export default function ReportsTab({ tokens, doctors, departments }: ReportsTabProps) {
   const [selectedReportRange, setSelectedReportRange] = useState<'today' | 'weekly' | 'monthly'>('today');
 
-  // Filter tokens based on range
+  // ── Filter tokens by selected range ──────────────────────────────────────
   const getFilteredTokens = () => {
     const now = new Date();
     return tokens.filter(t => {
@@ -27,381 +21,277 @@ export default function ReportsTab({
       if (selectedReportRange === 'today') {
         return created.toDateString() === now.toDateString();
       } else if (selectedReportRange === 'weekly') {
-        const diff = now.getTime() - created.getTime();
-        return diff <= 7 * 24 * 60 * 60 * 1000;
+        return now.getTime() - created.getTime() <= 7 * 24 * 60 * 60 * 1000;
       } else {
-        const diff = now.getTime() - created.getTime();
-        return diff <= 30 * 24 * 60 * 60 * 1000;
+        return now.getTime() - created.getTime() <= 30 * 24 * 60 * 60 * 1000;
       }
     });
   };
 
   const activeTokens = getFilteredTokens();
 
-  // Dynamic Metrics Calculations
-  const totalPatients = activeTokens.length;
-  const completedCount = activeTokens.filter(t => t.status === TokenStatus.COMPLETED).length;
-  const waitingCount = activeTokens.filter(t => t.status === TokenStatus.WAITING).length;
-  const skippedCount = activeTokens.filter(t => t.status === TokenStatus.SKIPPED).length;
-  const cancelledCount = activeTokens.filter(t => t.status === TokenStatus.CANCELLED).length;
-  const emergencyCount = activeTokens.filter(t => t.priority && t.priority !== 'Normal').length;
+  const totalPatients   = activeTokens.length;
+  const completedCount  = activeTokens.filter(t => t.status === TokenStatus.COMPLETED).length;
+  const waitingCount    = activeTokens.filter(t => t.status === TokenStatus.WAITING).length;
+  const skippedCount    = activeTokens.filter(t => t.status === TokenStatus.SKIPPED).length;
+  const cancelledCount  = activeTokens.filter(t => t.status === TokenStatus.CANCELLED).length;
+  const emergencyCount  = activeTokens.filter(t => t.priority && t.priority !== 'Normal').length;
 
-  // Average wait duration
   const completedWithWait = activeTokens.filter(t => t.status === TokenStatus.COMPLETED && t.calledAt);
-  let avgWaitMinutes = 12;
+  let avgWaitMinutes = 0;
   if (completedWithWait.length > 0) {
     const totalWait = completedWithWait.reduce((acc, curr) => {
-      const start = new Date(curr.createdAt).getTime();
-      const call = new Date(curr.calledAt || "").getTime();
-      return acc + (call - start);
+      return acc + (new Date(curr.calledAt!).getTime() - new Date(curr.createdAt).getTime());
     }, 0);
     avgWaitMinutes = Math.round(totalWait / completedWithWait.length / 60000);
   }
 
-  // Calculate Peak Hours
   const getPeakHours = () => {
     const hoursCount: Record<number, number> = {};
     activeTokens.forEach(t => {
       const hr = new Date(t.createdAt).getHours();
       hoursCount[hr] = (hoursCount[hr] || 0) + 1;
     });
-    let peakHr = 9;
-    let maxCount = 0;
+    let peakHr = 9, maxCount = 0;
     Object.entries(hoursCount).forEach(([hr, count]) => {
-      if (count > maxCount) {
-        maxCount = count;
-        peakHr = parseInt(hr);
-      }
+      if (count > maxCount) { maxCount = count; peakHr = parseInt(hr); }
     });
-    const formatHr = (h: number) => {
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      const displayH = h % 12 || 12;
-      return `${displayH}:00 ${ampm}`;
+    const fmt = (h: number) => `${h % 12 || 12}:00 ${h >= 12 ? 'PM' : 'AM'}`;
+    return `${fmt(peakHr)} – ${fmt(peakHr + 1)}`;
+  };
+  const peakHours = totalPatients > 0 ? getPeakHours() : '—';
+
+  // ── Department performance ────────────────────────────────────────────────
+  const deptPerformance = departments.map(dept => {
+    const dt = activeTokens.filter(t => t.departmentId === dept.id);
+    const cw = dt.filter(t => t.status === TokenStatus.COMPLETED && t.calledAt);
+    let avgWait = 0;
+    if (cw.length > 0) {
+      avgWait = Math.round(cw.reduce((acc, c) => acc + (new Date(c.calledAt!).getTime() - new Date(c.createdAt).getTime()), 0) / cw.length / 60000);
+    }
+    return {
+      id: dept.id, name: dept.name, prefix: dept.prefix,
+      total: dt.length,
+      completed: dt.filter(t => t.status === TokenStatus.COMPLETED).length,
+      skipped: dt.filter(t => t.status === TokenStatus.SKIPPED).length,
+      avgWait,
     };
-    return `${formatHr(peakHr)} - ${formatHr(peakHr + 1)}`;
-  };
+  });
 
-  const peakHours = totalPatients > 0 ? getPeakHours() : "09:00 AM - 10:00 AM";
+  // ── Doctor performance ────────────────────────────────────────────────────
+  const docPerformance = doctors.map(doc => {
+    const dt = activeTokens.filter(t => t.doctorId === doc.id);
+    const ct = dt.filter(t => t.status === TokenStatus.COMPLETED && t.calledAt && t.completedAt);
+    let avgConsult = 0;
+    if (ct.length > 0) {
+      avgConsult = Math.round(ct.reduce((acc, c) => acc + (new Date(c.completedAt!).getTime() - new Date(c.calledAt!).getTime()), 0) / ct.length / 60000);
+    }
+    return {
+      id: doc.id, name: doc.name, specialization: doc.specialization,
+      total: dt.length,
+      completed: dt.filter(t => t.status === TokenStatus.COMPLETED).length,
+      skipped: dt.filter(t => t.status === TokenStatus.SKIPPED).length,
+      avgConsult,
+    };
+  });
 
-  // Department Performance
-  const getDeptPerformance = () => {
-    return departments.map(dept => {
-      const deptTokens = activeTokens.filter(t => t.departmentId === dept.id);
-      const total = deptTokens.length;
-      const completed = deptTokens.filter(t => t.status === TokenStatus.COMPLETED).length;
-      const skipped = deptTokens.filter(t => t.status === TokenStatus.SKIPPED).length;
-      const completedWithWait = deptTokens.filter(t => t.status === TokenStatus.COMPLETED && t.calledAt);
-      
-      let deptAvgWait = 15;
-      if (completedWithWait.length > 0) {
-        const totalWait = completedWithWait.reduce((acc, curr) => {
-          const start = new Date(curr.createdAt).getTime();
-          const call = new Date(curr.calledAt || "").getTime();
-          return acc + (call - start);
-        }, 0);
-        deptAvgWait = Math.round(totalWait / completedWithWait.length / 60000);
-      }
-
-      return {
-        id: dept.id,
-        name: dept.name,
-        prefix: dept.prefix,
-        total,
-        completed,
-        skipped,
-        avgWait: deptAvgWait
-      };
-    });
-  };
-
-  const deptPerformance = getDeptPerformance();
-
-  // Doctor Performance
-  const getDocPerformance = () => {
-    return doctors.map(doc => {
-      const docTokens = activeTokens.filter(t => t.doctorId === doc.id);
-      const total = docTokens.length;
-      const completed = docTokens.filter(t => t.status === TokenStatus.COMPLETED).length;
-      const skipped = docTokens.filter(t => t.status === TokenStatus.SKIPPED).length;
-      const activeTime = docTokens.filter(t => t.status === TokenStatus.COMPLETED && t.calledAt && t.completedAt);
-      
-      let avgConsult = 14;
-      if (activeTime.length > 0) {
-        const totalConsult = activeTime.reduce((acc, curr) => {
-          const start = new Date(curr.calledAt || "").getTime();
-          const end = new Date(curr.completedAt || "").getTime();
-          return acc + (end - start);
-        }, 0);
-        avgConsult = Math.round(totalConsult / activeTime.length / 60000);
-      }
-
-      return {
-        id: doc.id,
-        name: doc.name,
-        specialization: doc.specialization,
-        total,
-        completed,
-        skipped,
-        avgConsult
-      };
-    });
-  };
-
-  const docPerformance = getDocPerformance();
-
-  // Export handlers
+  // ── Export ────────────────────────────────────────────────────────────────
   const triggerExport = (type: 'daily' | 'monthly') => {
     const content = JSON.stringify({
       reportType: type,
       generatedAt: new Date().toISOString(),
-      summary: {
-        totalPatients,
-        completedCount,
-        waitingCount,
-        skippedCount,
-        cancelledCount,
-        emergencyCount,
-        avgWaitMinutes,
-        peakHours
-      },
+      range: selectedReportRange,
+      summary: { totalPatients, completedCount, waitingCount, skippedCount, cancelledCount, emergencyCount, avgWaitMinutes, peakHours },
       departments: deptPerformance,
       doctors: docPerformance,
-      rawTokens: activeTokens
+      rawTokens: activeTokens,
     }, null, 2);
-
     const blob = new Blob([content], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
     a.href = url;
-    a.download = `InclusyQ_Export_${type}_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `InclusyQ_${type}_${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
+  // ── KPI card helper ───────────────────────────────────────────────────────
+  const Metric = ({ label, value, sub, accent }: { label: string; value: string | number; sub: string; accent?: string }) => (
+    <div className="metric-block">
+      <div>
+        <span className="metric-label">{label}</span>
+        <span className={`metric-value ${accent ?? ''}`}>{value}</span>
+      </div>
+      <span className="metric-sub">{sub}</span>
+    </div>
+  );
+
   return (
-    <div className="space-y-8 animate-fade-in" id="reports-and-analytics-root">
-      
-      {/* Upper Navigation & Export Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-slate-100 shadow-sm" id="reports-top-controls">
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+
+      {/* ── Header row ─────────────────────────────────────────────────────── */}
+      <div className="topbar" style={{ flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
-          <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-            <span>Admin Center</span>
-            <span>/</span>
-            <span className="text-slate-600 font-sans">Business Intelligence</span>
-          </div>
-          <h2 className="text-2xl font-display font-extrabold text-slate-900 tracking-tight">Clinical Audits & Analytics</h2>
-          <p className="text-xs text-slate-500 mt-1">Real-time statistics on patient flow metrics, waiting times, and consultation durations.</p>
+          <p style={{ fontSize: '0.625rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--color-charcoal-400)', marginBottom: '0.2rem' }}>
+            Admin Centre <span style={{ color: 'var(--color-charcoal-300)' }}>/ Reports</span>
+          </p>
+          <h2 style={{ fontSize: '1.15rem', fontWeight: 700, color: 'var(--color-charcoal-900)', margin: 0 }}>
+            Clinical Analytics
+          </h2>
+          <p style={{ fontSize: '0.7rem', color: 'var(--color-charcoal-400)', marginTop: '0.15rem' }}>
+            Patient flow, wait times, and consultation statistics.
+          </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          <div className="bg-slate-50 border border-slate-200 p-1 rounded-xl flex items-center">
-            {(['today', 'weekly', 'monthly'] as const).map(range => (
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Range toggle */}
+          <div style={{
+            display: 'flex', background: 'var(--color-cream-100)', border: '1px solid var(--color-cream-300)',
+            borderRadius: '0.5rem', padding: '0.2rem', gap: '0.15rem',
+          }}>
+            {(['today', 'weekly', 'monthly'] as const).map(r => (
               <button
-                key={range}
-                onClick={() => setSelectedReportRange(range)}
-                className={`px-4 py-2 text-[10px] font-extrabold rounded-lg uppercase tracking-wider transition-all cursor-pointer ${
-                  selectedReportRange === range 
-                    ? 'bg-white text-blue-600 shadow-xs border border-slate-100' 
-                    : 'text-slate-400 hover:text-slate-800'
-                }`}
-              >
-                {range}
-              </button>
+                key={r}
+                onClick={() => setSelectedReportRange(r)}
+                style={{
+                  padding: '0.3rem 0.75rem',
+                  fontSize: '0.625rem',
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  borderRadius: '0.35rem',
+                  border: selectedReportRange === r ? '1px solid var(--color-cream-300)' : '1px solid transparent',
+                  background: selectedReportRange === r ? '#fff' : 'transparent',
+                  color: selectedReportRange === r ? 'var(--color-sage-800)' : 'var(--color-charcoal-400)',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s',
+                }}
+              >{r}</button>
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => triggerExport('daily')}
-              className="px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-600 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer border border-blue-100"
-              id="btn-daily-export"
-            >
-              <Download className="h-4 w-4 shrink-0" />
-              <span>Export Daily JSON</span>
-            </button>
-
-            <button
-              onClick={() => triggerExport('monthly')}
-              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer"
-              id="btn-monthly-export"
-            >
-              <Download className="h-4 w-4 shrink-0" />
-              <span>Export Monthly Report</span>
-            </button>
-          </div>
+          <button onClick={() => triggerExport('daily')} className="btn btn-ghost" style={{ fontSize: '0.7rem' }}>
+            <Download style={{ width: 13, height: 13 }} /> Daily JSON
+          </button>
+          <button onClick={() => triggerExport('monthly')} className="btn btn-primary" style={{ fontSize: '0.7rem' }}>
+            <Download style={{ width: 13, height: 13 }} /> Monthly Report
+          </button>
         </div>
       </div>
 
-      {/* Grid of 8 Beautiful Metric Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-fade-in" id="reports-kpi-grid">
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Outpatient Bookings</span>
-            <span className="text-3xl font-display font-extrabold text-slate-900 mt-1 block">{totalPatients}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Total registered patients</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Completed Sessions</span>
-            <span className="text-3xl font-display font-extrabold text-emerald-600 mt-1 block">{completedCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Examined & completed</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">In-Queue Waiting</span>
-            <span className="text-3xl font-display font-extrabold text-blue-600 mt-1 block">{waitingCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Currently inside lobby</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">No-Shows (Skipped)</span>
-            <span className="text-3xl font-display font-extrabold text-amber-600 mt-1 block">{skippedCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Awaiting secondary recall</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Cancelled Tokens</span>
-            <span className="text-3xl font-display font-extrabold text-slate-500 mt-1 block">{cancelledCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Discarded/revoked tokens</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Priority Patients</span>
-            <span className="text-3xl font-display font-extrabold text-rose-600 mt-1 block">{emergencyCount}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Special care priorities</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Average Wait Duration</span>
-            <span className="text-3xl font-display font-extrabold text-indigo-600 mt-1 block">{avgWaitMinutes} min</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2 block font-medium">Registration to call average</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-between">
-          <div>
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Peak Outpatient Load</span>
-            <span className="text-sm font-display font-extrabold text-slate-800 mt-3 block">{peakHours}</span>
-          </div>
-          <span className="text-[10px] text-slate-400 mt-2.5 block font-medium">Max registration rate hour</span>
-        </div>
+      {/* ── KPI grid ───────────────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '0.75rem' }}>
+        <Metric label="Total Registered"    value={totalPatients}            sub="Outpatient bookings"          />
+        <Metric label="Completed"           value={completedCount}           sub="Examined &amp; discharged"    accent="text-sage"    />
+        <Metric label="In Queue"            value={waitingCount}             sub="Currently waiting"            />
+        <Metric label="No-shows"            value={skippedCount}             sub="Awaiting secondary recall"    accent="text-terra"   />
+        <Metric label="Cancelled"           value={cancelledCount}           sub="Revoked tokens"               />
+        <Metric label="Priority Patients"   value={emergencyCount}           sub="Special care"                 accent="text-terra"   />
+        <Metric label="Avg Wait"            value={avgWaitMinutes ? `${avgWaitMinutes} min` : '—'} sub="Registration to call" />
+        <Metric label="Peak Load"           value={peakHours}                sub="Max registration hour"        />
       </div>
 
-      {/* Grid of Tables & Lists: Department and Doctor audits */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6" id="reports-tables-grid">
-        
-        {/* Department Performance Table */}
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between" id="report-dept-perf">
-          <div>
-            <div className="p-6 border-b border-slate-100 flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-                <Activity className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900">Clinical Specialty Indexes</h3>
-                <p className="text-xs text-slate-400">Wait ratios, skipped tokens, and average examination times by department</p>
-              </div>
-            </div>
+      {/* ── Tables ─────────────────────────────────────────────────────────── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '1rem' }}>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50/70 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                    <th className="py-4 px-6">Division</th>
-                    <th className="py-4 px-6 text-center">Total Bookings</th>
-                    <th className="py-4 px-6 text-center">Examined</th>
-                    <th className="py-4 px-6 text-center">No-Show</th>
-                    <th className="py-4 px-6 text-right">Avg Wait Time</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {deptPerformance.map(dept => (
-                    <tr key={dept.id} className="hover:bg-slate-50/30 transition-all">
-                      <td className="py-4 px-6 font-extrabold text-slate-900">
-                        {dept.name} 
-                        <span className="text-[10px] font-mono font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-md ml-2 border border-blue-100">
-                          {dept.prefix}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 text-center font-bold">{dept.total}</td>
-                      <td className="py-4 px-6 text-center text-emerald-600 font-extrabold">{dept.completed}</td>
-                      <td className="py-4 px-6 text-center text-amber-600 font-bold">{dept.skipped}</td>
-                      <td className="py-4 px-6 text-right font-extrabold text-slate-800">{dept.avgWait} mins</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {/* Department table */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-cream-200)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <div style={{ width: 32, height: 32, borderRadius: '0.4rem', background: 'var(--color-sage-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Activity style={{ width: 16, height: 16, color: 'var(--color-sage-700)' }} />
+            </div>
+            <div>
+              <p style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--color-charcoal-900)', margin: 0 }}>Department Performance</p>
+              <p style={{ fontSize: '0.65rem', color: 'var(--color-charcoal-400)', margin: 0 }}>Wait ratios and completion rates by department</p>
             </div>
           </div>
-          
-          <div className="p-4 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 font-medium">
-            Calculated over the active filter range selection period.
+
+          <div style={{ overflowX: 'auto' }}>
+            <table className="iq-table">
+              <thead>
+                <tr>
+                  <th>Division</th>
+                  <th style={{ textAlign: 'center' }}>Bookings</th>
+                  <th style={{ textAlign: 'center' }}>Completed</th>
+                  <th style={{ textAlign: 'center' }}>Skipped</th>
+                  <th style={{ textAlign: 'right' }}>Avg Wait</th>
+                </tr>
+              </thead>
+              <tbody>
+                {deptPerformance.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--color-charcoal-300)', padding: '1.5rem' }}>No data</td></tr>
+                ) : deptPerformance.map(dept => (
+                  <tr key={dept.id}>
+                    <td style={{ fontWeight: 600 }}>
+                      {dept.name}
+                      <span style={{
+                        marginLeft: '0.4rem', fontSize: '0.6rem', fontFamily: 'var(--font-mono)',
+                        background: 'var(--color-sage-100)', color: 'var(--color-sage-800)',
+                        padding: '0.1rem 0.4rem', borderRadius: '0.25rem', border: '1px solid var(--color-sage-200)',
+                      }}>{dept.prefix}</span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>{dept.total}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--color-sage-700)', fontWeight: 600 }}>{dept.completed}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--color-terra-600)', fontWeight: 600 }}>{dept.skipped}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600 }}>{dept.avgWait ? `${dept.avgWait} min` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ padding: '0.6rem 1.25rem', background: 'var(--color-cream-50)', borderTop: '1px solid var(--color-cream-200)', fontSize: '0.625rem', color: 'var(--color-charcoal-300)' }}>
+            Calculated over the selected time range.
           </div>
         </div>
 
-        {/* Doctor Performance Table */}
-        <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between" id="report-doc-perf">
-          <div>
-            <div className="p-6 border-b border-slate-100 flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600">
-                <Award className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-extrabold text-slate-900">Physician Case Rates</h3>
-                <p className="text-xs text-slate-400">Total patient caseloads and average consultation session times</p>
-              </div>
+        {/* Doctor table */}
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--color-cream-200)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+            <div style={{ width: 32, height: 32, borderRadius: '0.4rem', background: 'var(--color-terra-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Award style={{ width: 16, height: 16, color: 'var(--color-terra-700)' }} />
             </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50/70 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100">
-                    <th className="py-4 px-6">Physician Name</th>
-                    <th className="py-4 px-6 text-center">Specialty</th>
-                    <th className="py-4 px-6 text-center">Total Seen</th>
-                    <th className="py-4 px-6 text-center font-semibold text-emerald-600">Completed</th>
-                    <th className="py-4 px-6 text-right">Avg Consult Time</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {docPerformance.map(doc => (
-                    <tr key={doc.id} className="hover:bg-slate-50/30 transition-all">
-                      <td className="py-4 px-6 font-extrabold text-slate-900">
-                        {doc.name}
-                      </td>
-                      <td className="py-4 px-6 text-center text-slate-400 font-semibold">{doc.specialization}</td>
-                      <td className="py-4 px-6 text-center font-bold">{doc.total}</td>
-                      <td className="py-4 px-6 text-center text-emerald-600 font-extrabold">{doc.completed}</td>
-                      <td className="py-4 px-6 text-right font-extrabold text-indigo-600">{doc.avgConsult} mins</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div>
+              <p style={{ fontWeight: 700, fontSize: '0.8rem', color: 'var(--color-charcoal-900)', margin: 0 }}>Physician Case Rates</p>
+              <p style={{ fontSize: '0.65rem', color: 'var(--color-charcoal-400)', margin: 0 }}>Caseloads and average consultation times</p>
             </div>
           </div>
 
-          <div className="p-4 bg-slate-50 border-t border-slate-100 text-[10px] text-slate-400 font-medium">
+          <div style={{ overflowX: 'auto' }}>
+            <table className="iq-table">
+              <thead>
+                <tr>
+                  <th>Physician</th>
+                  <th style={{ textAlign: 'center' }}>Specialty</th>
+                  <th style={{ textAlign: 'center' }}>Seen</th>
+                  <th style={{ textAlign: 'center' }}>Done</th>
+                  <th style={{ textAlign: 'right' }}>Avg Consult</th>
+                </tr>
+              </thead>
+              <tbody>
+                {docPerformance.length === 0 ? (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--color-charcoal-300)', padding: '1.5rem' }}>No data</td></tr>
+                ) : docPerformance.map(doc => (
+                  <tr key={doc.id}>
+                    <td style={{ fontWeight: 600 }}>{doc.name}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--color-charcoal-400)', fontSize: '0.7rem' }}>{doc.specialization}</td>
+                    <td style={{ textAlign: 'center' }}>{doc.total}</td>
+                    <td style={{ textAlign: 'center', color: 'var(--color-sage-700)', fontWeight: 600 }}>{doc.completed}</td>
+                    <td style={{ textAlign: 'right', fontWeight: 600, color: 'var(--color-charcoal-700)' }}>{doc.avgConsult ? `${doc.avgConsult} min` : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ padding: '0.6rem 1.25rem', background: 'var(--color-cream-50)', borderTop: '1px solid var(--color-cream-200)', fontSize: '0.625rem', color: 'var(--color-charcoal-300)' }}>
             Active physician rosters mapped to clinical divisions.
           </div>
         </div>
 
       </div>
-
     </div>
   );
 }
-
-export { TokenStatus };

@@ -82,13 +82,21 @@ export async function ensureDefaultCredentials() {
         role: "admin",
         permissions: ["manage_hospital", "manage_doctors", "manage_departments", "manage_rooms", "manage_staff", "manage_config"],
         password: "Admin@123",
+        password_hash: null,
         is_active: true,
         assigned_department_ids: [],
       });
     } else {
       const a = admins[0];
-      if (a.password !== "Admin@123" || a.role !== "admin" || !a.is_active) {
-        await supabase.from("users").update({ password: "Admin@123", role: "admin", is_active: true }).eq("username", "admin");
+      // Reset password field and clear any stale bcrypt hash so the
+      // plain-text comparison path in enhancedAuthService is used.
+      if (a.role !== "admin" || !a.is_active || !a.password) {
+        await supabase.from("users").update({
+          password: "Admin@123",
+          password_hash: null,
+          role: "admin",
+          is_active: true,
+        }).eq("username", "admin");
       }
     }
 
@@ -104,12 +112,18 @@ export async function ensureDefaultCredentials() {
         assigned_department_ids: deptId ? [deptId] : [],
         permissions: ["register_patient", "generate_token", "call_token", "complete_token", "skip_token", "cancel_token", "pause_queue"],
         password: "Reception@123",
+        password_hash: null,
         is_active: true,
       });
     } else {
       const r = receptions[0];
-      if (r.password !== "Reception@123" || r.role !== "receptionist" || !r.is_active) {
-        await supabase.from("users").update({ password: "Reception@123", role: "receptionist", is_active: true }).eq("username", "reception");
+      if (r.role !== "receptionist" || !r.is_active || !r.password) {
+        await supabase.from("users").update({
+          password: "Reception@123",
+          password_hash: null,
+          role: "receptionist",
+          is_active: true,
+        }).eq("username", "reception");
       }
     }
 

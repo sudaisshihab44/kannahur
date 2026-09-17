@@ -23,7 +23,7 @@ export async function createPatientHandler(req: VercelRequest, res: VercelRespon
     }
 
     const newPatient = {
-      id: `pat-${Date.now()}`,
+      id: `pat-${crypto.randomUUID()}`,
       name: name.trim(),
       mobile: cleanMobile,
       email: (email || '').trim(),

@@ -617,7 +617,7 @@ Attempt 5: Account locked for 15 minutes
 
 ### Endpoint Documentation
 
-See `AUTHENTICATION_REFACTOR_GUIDE.md` for detailed endpoint documentation.
+See the JWT Token Security and API Endpoint Security sections in this file for detailed endpoint documentation.
 
 ---
 

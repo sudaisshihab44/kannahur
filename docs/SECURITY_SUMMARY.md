@@ -297,8 +297,7 @@ All /api/upload/*                   → Sensitive Rate Limit + CSRF + JWT Admin 
   - Vulnerability disclosure policy
 
 ### Implementation Guides
-- **`AUTHENTICATION_REFACTOR_GUIDE.md`** - JWT authentication setup
-- **`AUTHENTICATION_SUMMARY.md`** - Auth system overview
+- **`SECURITY.md`** - JWT authentication setup + complete security reference
 - **`DEPLOYMENT_CHECKLIST.md`** - Deployment instructions
 
 ---

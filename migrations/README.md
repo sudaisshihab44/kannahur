@@ -196,8 +196,8 @@ WHERE department_id = 'dep-1' AND status = 'waiting';
 
 ## 📖 Additional Resources
 
-- **Detailed Analysis**: See `DATABASE_OPTIMIZATION_ANALYSIS.md`
-- **Implementation Guide**: See `DATABASE_OPTIMIZATION_GUIDE.md`
+- **Detailed Analysis**: See `../docs/DATABASE_OPTIMIZATION_GUIDE.md`
+- **Implementation Guide**: See `../docs/DATABASE_OPTIMIZATION_GUIDE.md`
 - **Optimized Repositories**: See `api/repositories/optimizedTokenRepository.ts`
 
 ---

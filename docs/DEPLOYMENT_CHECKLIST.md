@@ -19,8 +19,8 @@
 - [x] Frontend build passes with zero errors
 
 ### Documentation
-- [x] Created `AUTHENTICATION_REFACTOR_GUIDE.md` (comprehensive implementation guide)
-- [x] Created `AUTHENTICATION_SUMMARY.md` (executive summary)
+- [x] Created `SECURITY.md` auth documentation (comprehensive implementation guide)
+- [x] Created `SECURITY_SUMMARY.md` (executive summary)
 - [x] Created `.env.example` with all required variables
 - [x] Created `scripts/migrate-passwords.ts` (password migration script)
 
@@ -404,8 +404,8 @@ If critical issues arise, you can rollback in 3 steps:
 
 ## 📚 Additional Resources
 
-- **Implementation Guide:** `AUTHENTICATION_REFACTOR_GUIDE.md`
-- **Technical Summary:** `AUTHENTICATION_SUMMARY.md`
+- **Implementation Guide:** `SECURITY.md`
+- **Technical Summary:** `SECURITY_SUMMARY.md`
 - **Environment Template:** `.env.example`
 - **Migration Script:** `scripts/migrate-passwords.ts`
 - **Database Migration:** `migrations/006_add_authentication_tables.sql`

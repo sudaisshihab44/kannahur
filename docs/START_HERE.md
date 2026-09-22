@@ -55,13 +55,11 @@ Added **7-layer security protection** with 20+ validators, rate limiting, CSRF p
 
 ### If You're Understanding the Changes (⏰ 30 minutes)
 
-1. **Read:** `SECURITY_SUMMARY.md` (quick overview)
-2. **Read:** `FINAL_SUMMARY.md` (complete summary)
-3. **Skim:** Relevant sections of `SECURITY.md`
+1. **Read:** `SECURITY_SUMMARY.md` (quick overview + complete summary)
+2. **Skim:** Relevant sections of `SECURITY.md`
 
 **Files to read:**
-- `SECURITY_SUMMARY.md` ← Start here (10 min)
-- `FINAL_SUMMARY.md` ← Then here (15 min)
+- `SECURITY_SUMMARY.md` ← Start here (15 min)
 - `SECURITY.md` ← Reference as needed (5 min)
 
 ---
@@ -83,7 +81,7 @@ Added **7-layer security protection** with 20+ validators, rate limiting, CSRF p
 
 ### If You're Developing New Features (⏰ 2-3 hours)
 
-1. **Read:** `AUTHENTICATION_REFACTOR_GUIDE.md` (architecture)
+1. **Read:** `SECURITY.md` (architecture)
 2. **Review:** Controller examples in `api/controllers/`
 3. **Study:** Validation patterns in `api/validators/schemas.ts`
 
@@ -93,7 +91,7 @@ Added **7-layer security protection** with 20+ validators, rate limiting, CSRF p
 - `api/repositories/` - See data access patterns
 - `api/utils/validation.ts` - See validation patterns
 
-**See:** `AUTHENTICATION_REFACTOR_GUIDE.md`
+**See:** `SECURITY.md`
 
 ---
 
@@ -104,17 +102,15 @@ Added **7-layer security protection** with 20+ validators, rate limiting, CSRF p
 | If You Need... | Read This | Time |
 |----------------|-----------|------|
 | Quick overview | `SECURITY_SUMMARY.md` | 10 min |
-| Complete picture | `FINAL_SUMMARY.md` | 20 min |
+| Complete picture | `SECURITY_SUMMARY.md` | 20 min |
 | Deploy to production | `DEPLOYMENT_CHECKLIST.md` | 30 min |
 | Monitor the system | `SECURITY_CHECKLIST.md` | 20 min |
 | Deep dive security | `SECURITY.md` | 60 min |
-| Auth system details | `AUTHENTICATION_REFACTOR_GUIDE.md` | 45 min |
-| File navigation | `README_IMPROVEMENTS.md` | 10 min |
+| Auth system details | `SECURITY.md` | 45 min |
 
 ### Then reference others as needed:
 
-- `SECURITY_IMPLEMENTATION_COMPLETE.md` - Executive summary
-- `AUTHENTICATION_SUMMARY.md` - Auth system overview
+- `SECURITY.md` - Auth system overview
 - Source code with comments - Best for learning implementation
 
 ---
@@ -201,7 +197,7 @@ RESPONSE
 → Follow `DEPLOYMENT_CHECKLIST.md` (2-4 hours)
 
 ### Option 2: Learn First  
-→ Read `SECURITY_SUMMARY.md` then `FINAL_SUMMARY.md` (30 minutes)
+→ Read `SECURITY_SUMMARY.md` then `SECURITY_SUMMARY.md` (30 minutes)
 
 ### Option 3: Deep Dive
 → Start with `SECURITY.md` and related docs (2-3 hours)
@@ -210,7 +206,7 @@ RESPONSE
 → Follow `SECURITY_CHECKLIST.md` monitoring section (1 hour)
 
 ### Option 5: Review Architecture
-→ Read `AUTHENTICATION_REFACTOR_GUIDE.md` (1 hour)
+→ Read `SECURITY.md` (1 hour)
 
 ---
 
@@ -223,10 +219,10 @@ RESPONSE
 → **Read:** `SECURITY_SUMMARY.md` then `SECURITY.md`
 
 ### "What changed in the architecture?"
-→ **Read:** `FINAL_SUMMARY.md` Phase 1 section
+→ **Read:** `SECURITY_SUMMARY.md` Phase 1 section
 
 ### "How do I add new endpoints?"
-→ **Study:** `api/controllers/` examples + `AUTHENTICATION_REFACTOR_GUIDE.md`
+→ **Study:** `api/controllers/` examples + `SECURITY.md`
 
 ### "How do I monitor for security issues?"
 → **Use:** `SECURITY_CHECKLIST.md` monitoring section
@@ -282,14 +278,11 @@ RESPONSE
 
 ### Should Read
 - `SECURITY.md` - Comprehensive reference
-- `FINAL_SUMMARY.md` - Complete summary
+- `SECURITY_SUMMARY.md` - Complete summary
 - `SECURITY_CHECKLIST.md` - Operations
 
 ### Can Reference
-- `AUTHENTICATION_REFACTOR_GUIDE.md` - Auth system
-- `AUTHENTICATION_SUMMARY.md` - Auth overview
-- `SECURITY_IMPLEMENTATION_COMPLETE.md` - Executive
-- `README_IMPROVEMENTS.md` - Navigation guide
+- `SECURITY.md` - Auth system
 - Source code in `api/` - Implementation details
 
 ---
@@ -343,7 +336,7 @@ See: `DEPLOYMENT_CHECKLIST.md` → Section: Troubleshooting
 See: `SECURITY_CHECKLIST.md` → Section: Support & Escalation
 
 ### For Development Questions
-See: `AUTHENTICATION_REFACTOR_GUIDE.md` or source code
+See: `SECURITY.md` or source code
 
 ---
 
@@ -379,7 +372,7 @@ Finally: Deploy with confidence
 
 ---
 
-*Questions? Check `README_IMPROVEMENTS.md` for the complete documentation index.*
+*Questions? This file (START_HERE.md) is the documentation index.*
 
 **Created:** January 2024  
 **Version:** 2.0.0  

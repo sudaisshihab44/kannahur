@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { Clock, CheckCircle, AlertCircle, Users } from 'lucide-react';
@@ -49,7 +50,7 @@ export default function TrackToken() {
   }, [tokenId]);
 
   // ── Shared page wrapper ───────────────────────────────────────────────────
-  const Page = ({ children }: { children: React.ReactNode }) => (
+  const Page = ({ children }: { children: ReactNode }) => (
     <div style={{
       minHeight: '100vh',
       background: 'var(--color-cream-100)',

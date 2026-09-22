@@ -25,6 +25,11 @@ import {
 dotenv.config({ path: ".env.local" });
 
 import { supabase } from "./src/lib/supabaseServer.js";
+import bcrypt from "bcrypt";
+import { v4 as uuidv4 } from "uuid";
+import { cacheManager } from "./src-api/utils/redisCache.js";
+import { sanitizeObject, sanitizeUser, sanitizeError } from "./src-api/utils/sanitization.js";
+import { validateTextLength, validatePhoneNumber, sanitizeString } from "./src-api/utils/validation.js";
 
 // ── Monitoring bootstrap ──────────────────────────────────────────────────────
 // Must happen before any request is served so Sentry catches startup errors.
@@ -127,7 +132,7 @@ function mapUser(r: any): ReceptionUser {
     departmentId: r.department_id,
     assignedDepartmentIds: r.assigned_department_ids || [],
     permissions: r.permissions || [],
-    password: r.password,
+    // password intentionally omitted — never expose credentials (SQ-MAJ-004)
     isActive: r.is_active,
   };
 }
@@ -181,6 +186,57 @@ function getPriorityWeight(priority: string | undefined): number {
 }
 
 // ============================================================
+// Dev hardening helpers (SQ-MAJ-004 + SQ-MAJ-001 parity)
+// ============================================================
+
+// ponytail: fixed-window limiter on cacheManager; fail-closed on error.
+async function devApiRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const ip = (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim()
+      || req.socket?.remoteAddress || "unknown";
+    const count = await cacheManager.incr(`ratelimit:dev:${ip}`, 15 * 60);
+    if (typeof count !== "number" || count > 100) {
+      return res.status(429).json({ success: false, message: "Too many requests. Please try again later." });
+    }
+    next();
+  } catch {
+    return res.status(429).json({ success: false, message: "Too many requests. Please try again later." });
+  }
+}
+
+function genericError(res: express.Response, logPrefix: string, err: any, fallback = "An error occurred. Please try again.") {
+  console.error(logPrefix, err?.message || err);
+  const sanitized = sanitizeError(err);
+  // Never echo raw DB/driver messages — generic user message only.
+  return res.status(500).json({ success: false, message: fallback, code: sanitized.code });
+}
+
+const DEV_ALLOWED_EXT = [".png", ".jpg", ".jpeg", ".webp"];
+
+function devSafeUploadExt(originalname: string, mimetype: string): string | null {
+  const allowedMime = ["image/png", "image/jpeg", "image/jpg", "image/webp"];
+  if (!allowedMime.includes(mimetype)) return null;
+  const dot = originalname.lastIndexOf(".");
+  const ext = (dot >= 0 ? originalname.slice(dot) : "").toLowerCase();
+  if (!DEV_ALLOWED_EXT.includes(ext)) return null;
+  return ext;
+}
+
+function devHasValidMagicBytes(buffer: Buffer, mimetype: string): boolean {
+  if (buffer.length < 12) return false;
+  if (mimetype === "image/png") {
+    return buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47;
+  }
+  if (mimetype === "image/jpeg" || mimetype === "image/jpg") {
+    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+  if (mimetype === "image/webp") {
+    return buffer.toString("ascii", 0, 4) === "RIFF" && buffer.toString("ascii", 8, 12) === "WEBP";
+  }
+  return false;
+}
+
+// ============================================================
 // SSE
 // ============================================================
 
@@ -207,7 +263,7 @@ async function sendWhatsApp(
   console.log("------------------------------------------");
 
   await supabase.from("whatsapp_logs").insert({
-    id: `wa-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `wa-${uuidv4()}`,
     token_id: token.id,
     token_number: token.tokenNumber,
     patient_name: token.patientName,
@@ -291,7 +347,7 @@ async function addQueueLog(
   userId?: string
 ) {
   await supabase.from("queue_logs").insert({
-    id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `log-${uuidv4()}`,
     token_id: tokenId,
     token_number: tokenNumber,
     action,
@@ -302,7 +358,7 @@ async function addQueueLog(
 
 async function addAuditLog(action: string, detailText: string, userId?: string) {
   await supabase.from("queue_logs").insert({
-    id: `log-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    id: `log-${uuidv4()}`,
     token_id: "",
     token_number: detailText,
     action,
@@ -639,7 +695,10 @@ async function ensureDefaultCredentials() {
     if (deptsError) throw deptsError;
     const deptId = depts && depts.length > 0 ? depts[0].id : null;
 
-    // 2. Check admin user
+    // 2. Bootstrap admin user once — env password only, never overwrite.
+    // Creates the account only when missing AND BOOTSTRAP_ADMIN_PASSWORD is
+    // set. Existing accounts are never touched here (no password resets on
+    // boot). Hash stored with bcrypt (12 rounds); plaintext column unused.
     const { data: admins, error: adminsError } = await supabase
       .from("users")
       .select("*")
@@ -647,32 +706,27 @@ async function ensureDefaultCredentials() {
     if (adminsError) throw adminsError;
 
     if (!admins || admins.length === 0) {
-      const { error: insertError } = await supabase.from("users").insert({
-        id: "user-admin-default",
-        username: "admin",
-        name: "Dr. Helen Vance (Chief Administrator)",
-        role: "admin",
-        permissions: ["manage_hospital", "manage_doctors", "manage_departments", "manage_rooms", "manage_staff", "manage_config"],
-        password: "Admin@123",
-        is_active: true,
-        assigned_department_ids: []
-      });
-      if (insertError) throw insertError;
-      console.log("[InclusyQ] Default Administrator account created (admin / Admin@123).");
-    } else {
-      const adminUser = admins[0];
-      if (adminUser.password !== "Admin@123" || adminUser.role !== "admin" || !adminUser.is_active) {
-        const { error: updateError } = await supabase.from("users").update({
-          password: "Admin@123",
+      const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+      if (!bootstrapPassword) {
+        console.warn("[InclusyQ] No admin user found and BOOTSTRAP_ADMIN_PASSWORD is not set — skipping admin bootstrap.");
+      } else {
+        const password_hash = await bcrypt.hash(bootstrapPassword, 12);
+        const { error: insertError } = await supabase.from("users").insert({
+          id: "user-admin-default",
+          username: "admin",
+          name: "Dr. Helen Vance (Chief Administrator)",
           role: "admin",
-          is_active: true
-        }).eq("username", "admin");
-        if (updateError) throw updateError;
-        console.log("[InclusyQ] Default Administrator account updated to match required credentials.");
+          permissions: ["manage_hospital", "manage_doctors", "manage_departments", "manage_rooms", "manage_staff", "manage_config"],
+          password_hash,
+          is_active: true,
+          assigned_department_ids: []
+        });
+        if (insertError) throw insertError;
+        console.log("[InclusyQ] Default Administrator account created.");
       }
     }
 
-    // 3. Check reception user
+    // 3. Bootstrap reception user once — same rules as admin above.
     const { data: receptions, error: receptionsError } = await supabase
       .from("users")
       .select("*")
@@ -680,29 +734,24 @@ async function ensureDefaultCredentials() {
     if (receptionsError) throw receptionsError;
 
     if (!receptions || receptions.length === 0) {
-      const { error: insertError } = await supabase.from("users").insert({
-        id: "user-reception-default",
-        username: "reception",
-        name: "Claire Redfield (Senior Registrar)",
-        role: "receptionist",
-        department_id: deptId,
-        assigned_department_ids: deptId ? [deptId] : [],
-        permissions: ["register_patient", "generate_token", "call_token", "complete_token", "skip_token", "cancel_token", "pause_queue"],
-        password: "Reception@123",
-        is_active: true
-      });
-      if (insertError) throw insertError;
-      console.log("[InclusyQ] Default Reception account created (reception / Reception@123).");
-    } else {
-      const recUser = receptions[0];
-      if (recUser.password !== "Reception@123" || recUser.role !== "receptionist" || !recUser.is_active) {
-        const { error: updateError } = await supabase.from("users").update({
-          password: "Reception@123",
+      const bootstrapPassword = process.env.BOOTSTRAP_RECEPTION_PASSWORD;
+      if (!bootstrapPassword) {
+        console.warn("[InclusyQ] No reception user found and BOOTSTRAP_RECEPTION_PASSWORD is not set — skipping reception bootstrap.");
+      } else {
+        const password_hash = await bcrypt.hash(bootstrapPassword, 12);
+        const { error: insertError } = await supabase.from("users").insert({
+          id: "user-reception-default",
+          username: "reception",
+          name: "Claire Redfield (Senior Registrar)",
           role: "receptionist",
+          department_id: deptId,
+          assigned_department_ids: deptId ? [deptId] : [],
+          permissions: ["register_patient", "generate_token", "call_token", "complete_token", "skip_token", "cancel_token", "pause_queue"],
+          password_hash,
           is_active: true
-        }).eq("username", "reception");
-        if (updateError) throw updateError;
-        console.log("[InclusyQ] Default Reception account updated to match required credentials.");
+        });
+        if (insertError) throw insertError;
+        console.log("[InclusyQ] Default Reception account created.");
       }
     }
 
@@ -747,13 +796,13 @@ import {
 import { verifyAccessToken } from './src-api/utils/jwtUtils.js';
 
 // ── Lightweight auth helper for Express (dev server only) ────────────────────
-// Mirrors the behaviour of requireJwtAuth in jwtAuthMiddleware.ts but avoids
+// Mirrors requireJwtAuth in jwtAuthMiddleware.ts but avoids
 // the Redis / session-store dependency so it works before those tables exist.
 //
 // Accepts:
 //   1. Bearer <JWT access token>   — verified by signature only (no DB lookup)
-//   2. x-operator-username header  — legacy fallback, always passes (same as
-//      the legacy path in jwtAuthMiddleware.ts which only checks is_active)
+//   2. x-operator-username header  — ONLY when ALLOW_LEGACY_AUTH=true
+//      (transitional legacy clients; disabled by default — header is ignored)
 //
 // Returns true (allowed) / false (rejected with 401 already sent).
 function devRequireAuth(req: express.Request, res: express.Response): boolean {
@@ -769,9 +818,11 @@ function devRequireAuth(req: express.Request, res: express.Response): boolean {
     return true;
   }
 
-  // Legacy: x-operator-username — allow through (matches api/index.ts behaviour)
-  const legacyUser = req.headers['x-operator-username'];
-  if (legacyUser) return true;
+  // Legacy: x-operator-username — gated, never a silent bypass
+  if (process.env.ALLOW_LEGACY_AUTH === 'true') {
+    const legacyUser = req.headers['x-operator-username'];
+    if (legacyUser) return true;
+  }
 
   res.status(401).json({ success: false, message: 'Authentication required' });
   return false;
@@ -839,7 +890,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
   });
 
   // ------ GET full DB state ------
-  app.get("/api/data", async (req, res) => {
+  app.get("/api/data", devApiRateLimiter, async (req, res) => {
     try {
       const [
         { data: depts },
@@ -876,10 +927,10 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       }
 
       const settingsRow = settingsData?.[0];
-      res.json({
+      res.json(sanitizeObject({
         departments: (depts || []).map(mapDept),
         doctors: (docs || []).map(mapDoctor),
-        users: (usersData || []).map(mapUser),
+        users: (usersData || []).map((u: any) => sanitizeUser(mapUser(u))),
         patients: (patientsData || []).map(mapPatient),
         tokens: (tokensData || []).map(mapToken),
         consultation_rooms: (rooms || []).map(mapRoom),
@@ -887,10 +938,9 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
         whatsapp_logs: waLogs || [],
         devices: devicesData.map(mapDevice),
         settings: settingsRow ? mapSettings(settingsRow) : null,
-      });
+      }));
     } catch (err) {
-      console.error("/api/data error:", err);
-      res.status(500).json({ success: false, message: "Database error" });
+      return genericError(res, "/api/data error:", err, "Database error");
     }
   });
 
@@ -903,10 +953,13 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
         .from("tracking_devices")
         .select("*")
         .order("id", { ascending: true });
-      if (error) return res.status(500).json({ success: false, message: error.message });
+      if (error) {
+        console.error("[/api/devices]", error.message);
+        return res.status(500).json({ success: false, message: "Device query failed" });
+      }
       res.json({ success: true, devices: (data || []).map(mapDevice) });
     } catch (err: any) {
-      res.status(500).json({ success: false, message: err?.message || "Device query failed" });
+      return genericError(res, "[/api/devices]", err, "Device query failed");
     }
   });
 
@@ -915,7 +968,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     if (!deviceCode) return res.status(400).json({ success: false, message: "Device code is required." });
 
     const newDevice = {
-      id: `dev-${Date.now()}`,
+      id: `dev-${uuidv4()}`,
       device_code: deviceCode.trim().toUpperCase(),
       name: (name || `Smart Pager ${deviceCode}`).trim(),
       status: "available",
@@ -924,7 +977,10 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     };
 
     const { data, error } = await supabase.from("tracking_devices").insert(newDevice).select().single();
-    if (error) return res.status(500).json({ success: false, message: error.message });
+    if (error) {
+      console.error("[/api/devices] insert:", error.message);
+      return res.status(500).json({ success: false, message: "Failed to create device." });
+    }
 
     broadcastUpdate();
     res.json({ success: true, device: mapDevice(data) });
@@ -1012,10 +1068,10 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     const { departmentId, doctorId } = req.query as Record<string, string>;
     try {
       const waitingTokens = await computeWaitingQueue(departmentId, doctorId);
-      const enriched = waitingTokens.map(token => mapToken(token));
+      const enriched = waitingTokens.map(token => sanitizeObject(mapToken(token)));
       res.json({ success: true, tokens: enriched });
     } catch (error: any) {
-      res.status(500).json({ success: false, message: error.message });
+      return genericError(res, "[/api/queue]", error, "Failed to fetch queue.");
     }
   }));
 
@@ -1054,34 +1110,39 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
 
       res.json({
         success: true,
-        myToken,
-        currentServing: currentServing || null,
+        myToken: sanitizeObject(mapToken(myToken)),
+        currentServing: currentServing ? sanitizeObject(mapToken(currentServing)) : null,
         aheadCount: aheadList?.length ?? 0,
       });
     } catch (err: any) {
-      console.error("[/api/track ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to fetch tracking data." });
+      return genericError(res, "[/api/track ERROR]", err, "Failed to fetch tracking data.");
     }
   });
 
   // ------ Create / Find Patient ------
-  app.post("/api/patients", async (req, res) => {
+  app.post("/api/patients", devApiRateLimiter, async (req, res) => {
     try {
-      const { name, mobile, age, gender } = req.body;
+      const { name, mobile, age, gender } = req.body || {};
       if (!name || !mobile) {
         return res.status(400).json({ success: false, message: "Patient name and mobile are required." });
       }
-      const cleanMobile = mobile.trim();
-      const cleanName = name.trim();
+      let cleanMobile: string;
+      let cleanName: string;
+      try {
+        cleanName = validateTextLength(String(name), 1, 100, "name");
+        cleanMobile = validatePhoneNumber(String(mobile));
+      } catch (e: any) {
+        return res.status(400).json({ success: false, message: e?.message || "Invalid patient input." });
+      }
 
       const { data: existing } = await supabase
         .from("patients")
         .select("*")
         .eq("mobile", cleanMobile);
-      if (existing?.length) return res.json(mapPatient(existing[0]));
+      if (existing?.length) return res.json(sanitizeObject(mapPatient(existing[0])));
 
       const newPatient = {
-        id: `pat-${Date.now()}`,
+        id: `pat-${uuidv4()}`,
         name: cleanName,
         mobile: cleanMobile,
         email: (req.body.email || "").trim(),
@@ -1091,28 +1152,38 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       };
       const { data: patData, error: patError } = await supabase.from("patients").insert(newPatient).select();
       if (patError || !patData?.length) {
-        return res.status(500).json({ success: false, message: patError?.message || "Failed to create patient record." });
+        console.error("[/api/patients] insert failed:", patError?.message);
+        return res.status(500).json({ success: false, message: "Failed to create patient record." });
       }
-      res.json(mapPatient(patData[0]));
+      res.json(sanitizeObject(mapPatient(patData[0])));
     } catch (err: any) {
-      console.error("[/api/patients ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Unexpected server error creating patient." });
+      return genericError(res, "[/api/patients ERROR]", err, "Unexpected server error creating patient.");
     }
   });
 
   // ------ Create Token ------
-  app.post("/api/tokens", async (req, res) => {
+  app.post("/api/tokens", devApiRateLimiter, async (req, res) => {
     try {
     const {
       patientName, patientMobile, patientEmail, patientAge, patientGender,
       departmentId, doctorId, reasonForVisit, priority, estimatedConsultationTime,
-    } = req.body;
+    } = req.body || {};
 
     if (!patientName || !patientMobile || !departmentId || !doctorId) {
       return res.status(400).json({
         success: false,
         message: "Missing required fields: patientName, patientMobile, departmentId, doctorId."
       });
+    }
+
+    // Reuse shared validators (SQ-MAJ-004) — reject malformed input early.
+    let cleanName: string;
+    let cleanMobile: string;
+    try {
+      cleanName = validateTextLength(String(patientName), 1, 100, "patientName");
+      cleanMobile = validatePhoneNumber(String(patientMobile));
+    } catch (e: any) {
+      return res.status(400).json({ success: false, message: e?.message || "Invalid token input." });
     }
 
     const [{ data: depts }, { data: docs }] = await Promise.all([
@@ -1182,18 +1253,18 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     const position = (waitingTokens?.length || 0) + 1;
 
     const newToken = {
-      id: `tok-${Date.now()}`,
+      id: `tok-${uuidv4()}`,
       token_number: tokenNumber,
-      patient_name: patientName.trim(),
-      patient_mobile: patientMobile.trim(),
-      patient_email: patientEmail && patientEmail.trim() ? patientEmail.trim() : null,
+      patient_name: cleanName,
+      patient_mobile: cleanMobile,
+      patient_email: patientEmail && String(patientEmail).trim() ? String(patientEmail).trim() : null,
       patient_age: parseInt(patientAge) || 30,
       patient_gender: patientGender,
       department_id: departmentId,
       department_name: department.name,
       doctor_id: doctorId,
       doctor_name: doctor.name,
-      reason_for_visit: (reasonForVisit || "").trim(),
+      reason_for_visit: sanitizeString(String(reasonForVisit || "")),
       status: TokenStatus.WAITING,
       created_at: new Date().toISOString(),
       is_emergency: finalPriority !== "Normal",
@@ -1208,13 +1279,13 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     const { data: existingPat } = await supabase
       .from("patients")
       .select("id")
-      .eq("mobile", patientMobile.trim());
+      .eq("mobile", cleanMobile);
     if (!existingPat?.length) {
       await supabase.from("patients").insert({
-        id: `pat-${Date.now()}`,
-        name: patientName.trim(),
-        mobile: patientMobile.trim(),
-        email: patientEmail && patientEmail.trim() ? patientEmail.trim() : null,
+        id: `pat-${uuidv4()}`,
+        name: cleanName,
+        mobile: cleanMobile,
+        email: patientEmail && String(patientEmail).trim() ? String(patientEmail).trim() : null,
         age: parseInt(patientAge) || 30,
         gender: patientGender,
         created_at: new Date().toISOString(),
@@ -1227,14 +1298,14 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       .select();
 
     if (insertError || !inserted || inserted.length === 0) {
-      console.error("[TOKEN INSERT ERROR]", insertError);
+      console.error("[TOKEN INSERT ERROR]", insertError?.message);
       return res.status(500).json({
         success: false,
-        message: insertError?.message || "Token insert failed — no data returned from database."
+        message: "Failed to create token. Please try again."
       });
     }
 
-    const token = mapToken(inserted[0]);
+    const token = sanitizeObject(mapToken(inserted[0]));
     await addQueueLog(token.id, token.tokenNumber, "created");
     await recalculateQueueWaitTimes();
     broadcastUpdate();
@@ -1258,8 +1329,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
 
     res.json({ success: true, token });
     } catch (err: any) {
-      console.error("[/api/tokens ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Unexpected server error creating token." });
+      return genericError(res, "[/api/tokens ERROR]", err, "Unexpected server error creating token.");
     }
   });
 
@@ -1322,10 +1392,9 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       broadcastUpdate();
       
       const updated = await getToken(id);
-      res.json({ success: true, token: mapToken(updated) });
+      res.json({ success: true, token: sanitizeObject(mapToken(updated)) });
     } catch (err: any) {
-      console.error("[/api/tokens/call ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to call token." });
+      return genericError(res, "[/api/tokens/call ERROR]", err, "Failed to call token.");
     }
   });
 
@@ -1354,10 +1423,9 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       await notifyTwoAheadPatients(row.department_id);
       broadcastUpdate();
       const updated = await getToken(id);
-      res.json({ success: true, token: mapToken(updated) });
+      res.json({ success: true, token: sanitizeObject(mapToken(updated)) });
     } catch (err: any) {
-      console.error("[/api/tokens/complete ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to complete token." });
+      return genericError(res, "[/api/tokens/complete ERROR]", err, "Failed to complete token.");
     }
   });
 
@@ -1372,10 +1440,9 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       await notifyTwoAheadPatients(row.department_id);
       broadcastUpdate();
       const updated = await getToken(id);
-      res.json({ success: true, token: mapToken(updated) });
+      res.json({ success: true, token: sanitizeObject(mapToken(updated)) });
     } catch (err: any) {
-      console.error("[/api/tokens/skip ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to skip token." });
+      return genericError(res, "[/api/tokens/skip ERROR]", err, "Failed to skip token.");
     }
   });
 
@@ -1400,10 +1467,9 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       await notifyTwoAheadPatients(row.department_id);
       broadcastUpdate();
       const updated = await getToken(id);
-      res.json({ success: true, token: mapToken(updated) });
+      res.json({ success: true, token: sanitizeObject(mapToken(updated)) });
     } catch (err: any) {
-      console.error("[/api/tokens/cancel ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to cancel token." });
+      return genericError(res, "[/api/tokens/cancel ERROR]", err, "Failed to cancel token.");
     }
   });
 
@@ -1420,10 +1486,9 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       await addQueueLog(id, row.token_number, "recalled");
       broadcastUpdate();
       const updated = await getToken(id);
-      res.json({ success: true, token: mapToken(updated) });
+      res.json({ success: true, token: sanitizeObject(mapToken(updated)) });
     } catch (err: any) {
-      console.error("[/api/tokens/recall ERROR]", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to recall token." });
+      return genericError(res, "[/api/tokens/recall ERROR]", err, "Failed to recall token.");
     }
   });
 
@@ -1450,8 +1515,8 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       .limit(1);
     const anns = rows?.[0]?.announcements || [];
     const newAnn = {
-      id: `ann-${Date.now()}`,
-      text: text.trim(),
+      id: `ann-${uuidv4()}`,
+      text: sanitizeString(text).trim(),
       createdAt: new Date().toISOString(),
     };
     anns.unshift(newAnn);
@@ -1481,7 +1546,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     if (!name || !departmentId)
       return res.status(400).json({ success: false, message: "Doctor name and department are required" });
     const newDoc = {
-      id: `doc-${Date.now()}`,
+      id: `doc-${uuidv4()}`,
       name: name.trim(),
       department_id: departmentId,
       specialization: (specialization || "General").trim(),
@@ -1552,7 +1617,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     if (existing?.length)
       return res.status(400).json({ success: false, message: "Department prefix already exists" });
     const newDept = {
-      id: `dep-${Date.now()}`,
+      id: `dep-${uuidv4()}`,
       name: name.trim(),
       prefix: cleanPrefix,
       description: (description || "").trim(),
@@ -1607,7 +1672,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     if (!roomNumber || !roomName)
       return res.status(400).json({ success: false, message: "Room number and name are required" });
     const newRoom = {
-      id: `rm-${Date.now()}`,
+      id: `rm-${uuidv4()}`,
       room_number: roomNumber.trim(),
       room_name: roomName.trim(),
       assigned_doctor_id: assignedDoctorId || null,
@@ -1657,7 +1722,7 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     if (existing?.length)
       return res.status(400).json({ success: false, message: "Username already exists" });
     const newUser = {
-      id: `usr-${Date.now()}`,
+      id: `usr-${uuidv4()}`,
       username: username.trim().toLowerCase(),
       name: name.trim(),
       role,
@@ -1673,8 +1738,11 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       is_active: isActive !== undefined ? isActive : true,
     };
     const { data, error: insertErr } = await supabase.from("users").insert(newUser).select();
-    if (insertErr || !data?.length) return res.status(500).json({ success: false, message: insertErr?.message || "Failed to create user" });
-    const user = mapUser(data[0]);
+    if (insertErr || !data?.length) {
+      console.error("[/api/admin/users] insert:", insertErr?.message);
+      return res.status(500).json({ success: false, message: "Failed to create user." });
+    }
+    const user = sanitizeUser(mapUser(data[0]));
 
     if (user.role === UserRole.RECEPTIONIST) {
       const depts = user.assignedDepartmentIds || [];
@@ -1725,8 +1793,11 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
     if (isActive !== undefined) updates.is_active = isActive;
 
     const { data, error: updateErr } = await supabase.from("users").update(updates).eq("id", id).select();
-    if (updateErr || !data?.length) return res.status(500).json({ success: false, message: updateErr?.message || "User not found or update failed" });
-    const user = mapUser(data[0]);
+    if (updateErr || !data?.length) {
+      console.error("[/api/admin/users] update:", updateErr?.message);
+      return res.status(500).json({ success: false, message: "Failed to update user." });
+    }
+    const user = sanitizeUser(mapUser(data[0]));
 
     if (user.role === UserRole.RECEPTIONIST && assignedDepartmentIds !== undefined) {
       const operatorUsername = (req.headers["x-operator-username"] as string) || "admin";
@@ -1788,7 +1859,8 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
         .limit(1);
       
       if (selectErr) {
-        return res.status(500).json({ success: false, message: selectErr.message });
+        console.error("[/api/admin/hospital-info] select:", selectErr.message);
+        return res.status(500).json({ success: false, message: "Failed to update hospital info." });
       }
 
       const hospitalInfo = { ...(rows?.[0]?.hospital_info || {}) };
@@ -1818,14 +1890,14 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
         .eq("id", 1);
 
       if (updateErr) {
-        return res.status(500).json({ success: false, message: updateErr.message });
+        console.error("[/api/admin/hospital-info] update:", updateErr.message);
+        return res.status(500).json({ success: false, message: "Failed to update hospital info." });
       }
 
       broadcastUpdate();
-      res.json({ success: true, hospitalInfo });
+      res.json({ success: true, hospitalInfo: sanitizeObject(hospitalInfo) });
     } catch (err: any) {
-      console.error("/api/admin/hospital-info error:", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to update hospital info" });
+      return genericError(res, "/api/admin/hospital-info error:", err, "Failed to update hospital info.");
     }
   });
 
@@ -1852,27 +1924,35 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
       }
 
       const file = req.file;
+      const ext = devSafeUploadExt(file.originalname, file.mimetype);
+      if (!ext) {
+        return res.status(400).json({ success: false, message: "Invalid file type." });
+      }
+      if (!devHasValidMagicBytes(file.buffer, file.mimetype)) {
+        return res.status(400).json({ success: false, message: "Invalid file type." });
+      }
 
-      // 1. Ensure bucket "hospital-logos" exists
+      // 1. Ensure bucket "hospital-logos" exists (private)
       const { data: buckets, error: bucketErr } = await supabase.storage.listBuckets();
       if (bucketErr) {
-        return res.status(500).json({ success: false, message: `Storage list error: ${bucketErr.message}` });
+        console.error("[/api/admin/upload-logo] listBuckets:", bucketErr.message);
+        return res.status(500).json({ success: false, message: "Storage unavailable. Please try again." });
       }
 
       if (!buckets?.some((b) => b.id === "hospital-logos")) {
         const { error: createErr } = await supabase.storage.createBucket("hospital-logos", {
-          public: true,
+          public: false,
           allowedMimeTypes: ["image/png", "image/jpeg", "image/jpg", "image/webp"],
           fileSizeLimit: 5242880,
         });
         if (createErr) {
-          return res.status(500).json({ success: false, message: `Storage bucket creation failed: ${createErr.message}` });
+          console.error("[/api/admin/upload-logo] createBucket:", createErr.message);
+          return res.status(500).json({ success: false, message: "Storage unavailable. Please try again." });
         }
       }
 
-      // 2. Generate unique filename to prevent overwriting
-      const extension = path.extname(file.originalname) || ".png";
-      const filename = `logo-${Date.now()}-${Math.random().toString(36).substr(2, 5)}${extension}`;
+      // 2. UUID filename, no overwrite
+      const filename = `logo-${uuidv4()}${ext}`;
 
       // 3. Upload file
       const { data: uploadData, error: uploadErr } = await supabase.storage
@@ -1880,31 +1960,34 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
         .upload(filename, file.buffer, {
           contentType: file.mimetype,
           cacheControl: "3600",
-          upsert: true,
+          upsert: false,
         });
 
       if (uploadErr) {
-        return res.status(500).json({ success: false, message: `Upload failed: ${uploadErr.message}` });
+        console.error("[/api/admin/upload-logo] upload:", uploadErr.message);
+        return res.status(500).json({ success: false, message: "Failed to upload logo." });
       }
 
-      // 4. Construct Public URL
-      const { data: publicUrlData } = supabase.storage
+      // 4. Signed URL (private bucket)
+      const { data: signedData, error: signedErr } = await supabase.storage
         .from("hospital-logos")
-        .getPublicUrl(filename);
+        .createSignedUrl(filename, 7 * 24 * 3600);
 
-      const logoUrl = publicUrlData?.publicUrl;
-      if (!logoUrl) {
-        return res.status(500).json({ success: false, message: "Failed to generate public URL for logo." });
+      const logoUrl = signedData?.signedUrl;
+      if (signedErr || !logoUrl) {
+        console.error("[/api/admin/upload-logo] signed URL:", signedErr?.message);
+        return res.status(500).json({ success: false, message: "Failed to upload logo." });
       }
 
-      // 5. Save the public URL into the settings table (hospital_info)
+      // 5. Save the signed URL into the settings table (hospital_info)
       const { data: rows, error: selectErr } = await supabase
         .from("settings")
         .select("hospital_info")
         .limit(1);
 
       if (selectErr) {
-        return res.status(500).json({ success: false, message: selectErr.message });
+        console.error("[/api/admin/upload-logo] settings select:", selectErr.message);
+        return res.status(500).json({ success: false, message: "Failed to upload logo." });
       }
 
       const hospitalInfo = { ...(rows?.[0]?.hospital_info || {}) };
@@ -1916,14 +1999,14 @@ const wa = (fn: Function) => (req: any, res: any, next: any) =>
         .eq("id", 1);
 
       if (updateErr) {
-        return res.status(500).json({ success: false, message: updateErr.message });
+        console.error("[/api/admin/upload-logo] settings update:", updateErr.message);
+        return res.status(500).json({ success: false, message: "Failed to upload logo." });
       }
 
       broadcastUpdate();
       res.json({ success: true, logoUrl });
     } catch (err: any) {
-      console.error("/api/admin/upload-logo error:", err);
-      res.status(500).json({ success: false, message: err.message || "Failed to upload logo." });
+      return genericError(res, "/api/admin/upload-logo error:", err, "Failed to upload logo.");
     }
   });
 
@@ -1954,9 +2037,9 @@ app.use((err: any, req: any, res: any, next: any) => {
   // Inline errorId generation — avoids require() of logger module
   const errorId = `ERR-${Date.now().toString(36)}`;
   const status  = err.status || 500;
-  const message = err.message || "Internal server error";
-  console.error(`[UNHANDLED ERROR] errorId=${errorId} ${req.method} ${req.path}:`, err);
-  res.status(status).json({ success: false, message, errorId });
+  console.error(`[UNHANDLED ERROR] errorId=${errorId} ${req.method} ${req.path}:`, err?.message || err);
+  // Generic user message — never echo raw internals (SQ-MAJ-004).
+  res.status(status).json({ success: false, message: "Internal server error.", errorId });
 });
 
 export default app;

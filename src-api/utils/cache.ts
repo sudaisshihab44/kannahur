@@ -31,7 +31,8 @@ class InMemoryCache {
       if (firstKey) this.store.delete(firstKey);
     }
 
-    const etag = `"${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}"`;
+    // ponytail: randomUUID etag is unique per write; no Math.random IDs.
+    const etag = `"${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}"`;
     this.store.set(key, { value, expiresAt: Date.now() + ttlMs, etag });
     return etag;
   }

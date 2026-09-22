@@ -5,7 +5,7 @@
 #   app         Node.js API + React frontend (hot-reload via tsx)
 #   redis       Redis 7 (BullMQ + caching)
 #   prometheus  Metrics scraper
-#   grafana     Dashboard UI  →  http://localhost:3001  (admin/admin)
+#   grafana     Dashboard UI  →  http://localhost:3001  (creds from GRAFANA_ADMIN_* env)
 #
 # Usage:
 #   docker compose up                # start everything
@@ -34,6 +34,9 @@ services:
       NODE_ENV:  production
       PORT:      3000
       REDIS_URL: redis://redis:6379
+      # Bearer token for GET /api/metrics. Blank = open (dev only).
+      # Production MUST set METRICS_TOKEN (see .env.example).
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -52,7 +55,7 @@ services:
     container_name: inclusyq-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     command: >
       redis-server
       --save 60 1
@@ -75,16 +78,18 @@ services:
     container_name: inclusyq-prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+      # Uncomment when METRICS_TOKEN is set on app (see prometheus.yml):
+      # - ./monitoring/.metrics_token:/etc/prometheus/metrics_token:ro
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
       - '--storage.tsdb.retention.time=30d'
-      - '--web.enable-lifecycle'
-      - '--web.enable-admin-api'
+      # NOTE: --web.enable-lifecycle / --web.enable-admin-api intentionally
+      # removed (SQ-MAJ-005) — they expose /-/quit and the admin API.
     networks:
       - inclusyq
 
@@ -94,10 +99,12 @@ services:
     container_name: inclusyq-grafana
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     environment:
-      GF_SECURITY_ADMIN_USER:          admin
-      GF_SECURITY_ADMIN_PASSWORD:      admin
+      # SQ-MAJ-005: no default creds — compose fails fast with a clear message
+      # if these are unset. Set via shell env or a gitignored .env file.
+      GF_SECURITY_ADMIN_USER:          ${GRAFANA_ADMIN_USER:?Set GRAFANA_ADMIN_USER (see .env.example)}
+      GF_SECURITY_ADMIN_PASSWORD:      ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD (see .env.example)}
       GF_USERS_ALLOW_SIGN_UP:          "false"
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/inclusyq.json
       GF_AUTH_ANONYMOUS_ENABLED:       "false"

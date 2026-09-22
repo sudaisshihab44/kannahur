@@ -1,9 +1,11 @@
 /**
  * api/utils/seed.ts
  *
- * Database seeding utility — ensures default settings, admin/reception users, and tracking devices.
- * Moved from api/_lib/seed.ts during enterprise refactor.
+ * Database seeding utility — ensures default settings and tracking devices,
+ * plus bootstrap-once admin/reception users from env passwords only.
+ * Never overwrites existing credentials; never logs secrets.
  */
+import bcrypt from "bcrypt";
 import { supabase } from "../config/supabase.js";
 
 /**
@@ -72,58 +74,48 @@ export async function ensureDefaultCredentials() {
     const { data: depts } = await supabase.from("departments").select("id").limit(1);
     const deptId = depts?.[0]?.id || null;
 
-    // Admin user
+    // Bootstrap-once admin user: create only when missing AND
+    // BOOTSTRAP_ADMIN_PASSWORD is set. Existing accounts are never modified
+    // (no password resets on boot). Bcrypt hash, 12 rounds.
     const { data: admins } = await supabase.from("users").select("*").eq("username", "admin");
     if (!admins || admins.length === 0) {
-      await supabase.from("users").insert({
-        id: "user-admin-default",
-        username: "admin",
-        name: "Dr. Helen Vance (Chief Administrator)",
-        role: "admin",
-        permissions: ["manage_hospital", "manage_doctors", "manage_departments", "manage_rooms", "manage_staff", "manage_config"],
-        password: "Admin@123",
-        password_hash: null,
-        is_active: true,
-        assigned_department_ids: [],
-      });
-    } else {
-      const a = admins[0];
-      // Reset password field and clear any stale bcrypt hash so the
-      // plain-text comparison path in enhancedAuthService is used.
-      if (a.role !== "admin" || !a.is_active || !a.password) {
-        await supabase.from("users").update({
-          password: "Admin@123",
-          password_hash: null,
+      const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+      if (!bootstrapPassword) {
+        console.warn("[InclusyQ] No admin user found and BOOTSTRAP_ADMIN_PASSWORD is not set — skipping admin bootstrap.");
+      } else {
+        await supabase.from("users").insert({
+          id: "user-admin-default",
+          username: "admin",
+          name: "Dr. Helen Vance (Chief Administrator)",
           role: "admin",
+          permissions: ["manage_hospital", "manage_doctors", "manage_departments", "manage_rooms", "manage_staff", "manage_config"],
+          password_hash: await bcrypt.hash(bootstrapPassword, 12),
           is_active: true,
-        }).eq("username", "admin");
+          assigned_department_ids: [],
+        });
+        console.log("[InclusyQ] Default Administrator account created.");
       }
     }
 
-    // Reception user
+    // Bootstrap-once reception user — same rules as admin above.
     const { data: receptions } = await supabase.from("users").select("*").eq("username", "reception");
     if (!receptions || receptions.length === 0) {
-      await supabase.from("users").insert({
-        id: "user-reception-default",
-        username: "reception",
-        name: "Claire Redfield (Senior Registrar)",
-        role: "receptionist",
-        department_id: deptId,
-        assigned_department_ids: deptId ? [deptId] : [],
-        permissions: ["register_patient", "generate_token", "call_token", "complete_token", "skip_token", "cancel_token", "pause_queue"],
-        password: "Reception@123",
-        password_hash: null,
-        is_active: true,
-      });
-    } else {
-      const r = receptions[0];
-      if (r.role !== "receptionist" || !r.is_active || !r.password) {
-        await supabase.from("users").update({
-          password: "Reception@123",
-          password_hash: null,
+      const bootstrapPassword = process.env.BOOTSTRAP_RECEPTION_PASSWORD;
+      if (!bootstrapPassword) {
+        console.warn("[InclusyQ] No reception user found and BOOTSTRAP_RECEPTION_PASSWORD is not set — skipping reception bootstrap.");
+      } else {
+        await supabase.from("users").insert({
+          id: "user-reception-default",
+          username: "reception",
+          name: "Claire Redfield (Senior Registrar)",
           role: "receptionist",
+          department_id: deptId,
+          assigned_department_ids: deptId ? [deptId] : [],
+          permissions: ["register_patient", "generate_token", "call_token", "complete_token", "skip_token", "cancel_token", "pause_queue"],
+          password_hash: await bcrypt.hash(bootstrapPassword, 12),
           is_active: true,
-        }).eq("username", "reception");
+        });
+        console.log("[InclusyQ] Default Reception account created.");
       }
     }
 

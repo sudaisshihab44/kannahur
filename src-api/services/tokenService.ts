@@ -148,7 +148,7 @@ export async function createToken(input: {
   // ── Redis INCR (0 DB) or DB fallback (1 DB): atomic token number ──────────
   await seedTokenCounter(departmentId);
   const tokenNumber = await getNextTokenNumber(departmentId, department.prefix || 'GEN');
-  const tokenId     = `tok-${Date.now()}`;
+  const tokenId     = `tok-${uuidv4()}`;
 
   // ── DB round-trip 3: atomic upsert patient + insert token (single RPC) ────
   // Uses create_token_atomic() PostgreSQL function from migration 007.
@@ -226,7 +226,7 @@ async function createTokenFallback(
 
   if (!(await findPatientByMobile(patientMobile.trim()))) {
     await insertPatientFn({
-      id: `pat-${Date.now()}`,
+      id: `pat-${uuidv4()}`,
       name: patientName.trim(),
       mobile: patientMobile.trim(),
       email: patientEmail?.trim() || null,

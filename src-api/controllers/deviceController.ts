@@ -8,6 +8,7 @@ import { findAllDevices, findDeviceById, insertDevice, updateDevice, releaseDevi
 import { findTokenById, updateToken } from '../repositories/tokenRepository.js';
 import { addQueueLog } from '../services/queueService.js';
 import { mapDevice } from '../utils/mappers.js';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function listDevicesHandler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -24,7 +25,7 @@ export async function createDeviceHandler(req: VercelRequest, res: VercelRespons
     if (!deviceCode) return res.status(400).json({ success: false, message: 'Device code is required.' });
 
     const newDevice = {
-      id: `dev-${Date.now()}`,
+      id: `dev-${uuidv4()}`,
       device_code: deviceCode.trim().toUpperCase(),
       name: (name || `Smart Pager ${deviceCode}`).trim(),
       status: 'available',

@@ -27,16 +27,30 @@ const MAX_CONCURRENT_SESSIONS = parseInt(process.env.MAX_CONCURRENT_SESSIONS  ??
 const SESSION_TIMEOUT_HOURS   = parseInt(process.env.SESSION_TIMEOUT_HOURS    ?? '24', 10);
 const BCRYPT_ROUNDS           = parseInt(process.env.BCRYPT_ROUNDS            ?? '12', 10);
 
+function requireJwtSecret(name: string): string {
+  const value = process.env[name];
+  // ponytail: fail fast — no fallback secrets (forgery risk if default ships).
+  if (!value) throw new Error(`[jwtConfig] ${name} is not set. Generate one: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`);
+  if (value.length < 32) throw new Error(`[jwtConfig] ${name} must be at least 32 characters.`);
+  return value;
+}
+
+const accessSecret = requireJwtSecret('JWT_ACCESS_SECRET');
+const refreshSecret = requireJwtSecret('JWT_REFRESH_SECRET');
+if (accessSecret === refreshSecret) {
+  throw new Error('[jwtConfig] JWT_ACCESS_SECRET and JWT_REFRESH_SECRET must differ.');
+}
+
 export const jwtConfig = {
   // ── Access token (short-lived) ──────────────────────────────────────────────
   accessToken: {
-    secret:    process.env.JWT_ACCESS_SECRET  || 'inclusyq-access-secret-change-in-production',
+    secret:    accessSecret,
     expiresIn: process.env.JWT_ACCESS_EXPIRES || '15m',
   },
 
   // ── Refresh token (long-lived) ──────────────────────────────────────────────
   refreshToken: {
-    secret:    process.env.JWT_REFRESH_SECRET  || 'inclusyq-refresh-secret-change-in-production',
+    secret:    refreshSecret,
     expiresIn: process.env.JWT_REFRESH_EXPIRES || '7d',
   },
 

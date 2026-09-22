@@ -14,7 +14,7 @@ create table if not exists departments (
   is_enabled boolean default true,
   default_consultation_time integer default 15
 );
-alter table departments disable row level security;
+alter table departments enable row level security;
 
 create table if not exists doctors (
   id text primary key,
@@ -29,7 +29,7 @@ create table if not exists doctors (
   max_patients_per_day integer default 40,
   is_enabled boolean default true
 );
-alter table doctors disable row level security;
+alter table doctors enable row level security;
 
 create table if not exists patients (
   id text primary key,
@@ -40,7 +40,7 @@ create table if not exists patients (
   gender text,
   created_at timestamptz default now()
 );
-alter table patients disable row level security;
+alter table patients enable row level security;
 
 create table if not exists tokens (
   id text primary key,
@@ -72,7 +72,7 @@ create table if not exists tokens (
   notified_two_ahead boolean default false,
   device_id text
 );
-alter table tokens disable row level security;
+alter table tokens enable row level security;
 
 create table if not exists tracking_devices (
   id text primary key,
@@ -84,7 +84,7 @@ create table if not exists tracking_devices (
   battery_level integer default 100,
   last_seen_at timestamptz default now()
 );
-alter table tracking_devices disable row level security;
+alter table tracking_devices enable row level security;
 
 create table if not exists consultation_rooms (
   id text primary key,
@@ -95,7 +95,7 @@ create table if not exists consultation_rooms (
   status text default 'available',
   display_screen_id text
 );
-alter table consultation_rooms disable row level security;
+alter table consultation_rooms enable row level security;
 
 create table if not exists users (
   id text primary key,
@@ -105,10 +105,10 @@ create table if not exists users (
   department_id text,
   assigned_department_ids jsonb default '[]',
   permissions jsonb default '[]',
-  password text default 'password',
+  password_hash text,
   is_active boolean default true
 );
-alter table users disable row level security;
+alter table users enable row level security;
 
 create table if not exists queue_logs (
   id text primary key,
@@ -118,7 +118,7 @@ create table if not exists queue_logs (
   user_id text,
   timestamp timestamptz default now()
 );
-alter table queue_logs disable row level security;
+alter table queue_logs enable row level security;
 
 create table if not exists whatsapp_logs (
   id text primary key,
@@ -130,7 +130,7 @@ create table if not exists whatsapp_logs (
   timestamp timestamptz default now(),
   type text
 );
-alter table whatsapp_logs disable row level security;
+alter table whatsapp_logs enable row level security;
 
 -- Single-row settings table
 create table if not exists settings (
@@ -140,7 +140,54 @@ create table if not exists settings (
   announcements jsonb default '[]',
   config jsonb default '{}'
 );
-alter table settings disable row level security;
+alter table settings enable row level security;
+
+-- ============================================================
+-- 1b. ROW LEVEL SECURITY (SQ-BLK-002 remediation)
+-- Backend uses SUPABASE_SERVICE_ROLE_KEY (bypasses RLS) for all
+-- CRUD via src-api/repositories + /api/track. Anon/authenticated
+-- get SELECT-only on public display tables. PHI tables (patients,
+-- tokens, users, queue_logs, whatsapp_logs, tracking_devices)
+-- have NO policies = deny-all for anon/authenticated.
+-- Idempotent: safe to re-run (DROP POLICY IF EXISTS first).
+-- ============================================================
+
+-- Public display tables: read-only for anon + authenticated
+drop policy if exists anon_select_departments on departments;
+create policy anon_select_departments on departments
+  for select to anon using (true);
+drop policy if exists auth_select_departments on departments;
+create policy auth_select_departments on departments
+  for select to authenticated using (true);
+
+drop policy if exists anon_select_doctors on doctors;
+create policy anon_select_doctors on doctors
+  for select to anon using (is_enabled = true);
+drop policy if exists auth_select_doctors on doctors;
+create policy auth_select_doctors on doctors
+  for select to authenticated using (is_enabled = true);
+
+drop policy if exists anon_select_rooms on consultation_rooms;
+create policy anon_select_rooms on consultation_rooms
+  for select to anon using (true);
+drop policy if exists auth_select_rooms on consultation_rooms;
+create policy auth_select_rooms on consultation_rooms
+  for select to authenticated using (true);
+
+drop policy if exists anon_select_settings on settings;
+create policy anon_select_settings on settings
+  for select to anon using (true);
+drop policy if exists auth_select_settings on settings;
+create policy auth_select_settings on settings
+  for select to authenticated using (true);
+
+-- Defense in depth: explicit grants (policies alone are not enough
+-- if a permissive policy is added later). service_role/postgres
+-- untouched, so backend CRUD keeps working.
+revoke all on table patients, tokens, users, queue_logs, whatsapp_logs, tracking_devices
+  from anon, authenticated;
+grant select on table departments, doctors, consultation_rooms, settings
+  to anon, authenticated;
 
 -- ============================================================
 -- 2. SEED DEFAULT DATA
@@ -163,16 +210,20 @@ insert into doctors (id, name, department_id, specialization, status, room_numbe
   ('doc-6', 'Dr. Arthur Pendelton', 'dep-5', 'Refractive Surgery', 'active', 'G-12', 15, '08:00', '17:00', 40, true)
 on conflict (id) do nothing;
 
-insert into users (id, username, name, role, department_id, assigned_department_ids, permissions, password, is_active) values
+-- NOTE: default users carry NO password. Set BOOTSTRAP_ADMIN_PASSWORD /
+-- BOOTSTRAP_RECEPTION_PASSWORD in the environment on first boot; the server
+-- hashes them with bcrypt (12 rounds) into password_hash. Never store or log
+-- plaintext credentials.
+insert into users (id, username, name, role, department_id, assigned_department_ids, permissions, is_active) values
   ('user-1', 'admin', 'Dr. Helen Vance (Chief Administrator)', 'admin', null, '[]',
    '["manage_hospital","manage_doctors","manage_departments","manage_rooms","manage_staff","manage_config"]',
-   'Admin@123', true),
+   true),
   ('user-2', 'reception', 'Claire Redfield (Senior Registrar)', 'receptionist', 'dep-1', '["dep-1"]',
    '["register_patient","generate_token","call_token","complete_token","skip_token","cancel_token","pause_queue"]',
-   'Reception@123', true),
+   true),
   ('user-3', 'reception2', 'Leon S. Kennedy (Junior Clerk)', 'receptionist', null, '[]',
    '["register_patient","generate_token","call_token","complete_token","skip_token","cancel_token","pause_queue"]',
-   'password', true)
+   true)
 on conflict (id) do nothing;
 
 insert into consultation_rooms (id, room_number, room_name, assigned_doctor_id, department_id, status) values

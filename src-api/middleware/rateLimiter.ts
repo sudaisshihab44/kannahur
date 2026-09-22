@@ -33,6 +33,8 @@
  *   REFRESH_WINDOW_SECONDS  number  default 900  (15 min)
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { cacheManager } from '../utils/redisCache.js';
+import { validateUsername } from '../utils/validation.js';
 
 // ── Config (env-driven) ───────────────────────────────────────────────────────
 
@@ -42,24 +44,13 @@ const AUTH_LOCKOUT_SECS      = parseInt(process.env.AUTH_LOCKOUT_SECONDS   ?? '9
 const REFRESH_MAX_ATTEMPTS   = parseInt(process.env.REFRESH_MAX_ATTEMPTS   ?? '30',  10);
 const REFRESH_WINDOW_MS      = parseInt(process.env.REFRESH_WINDOW_SECONDS ?? '900', 10) * 1000;
 
-// ── In-memory store ───────────────────────────────────────────────────────────
+// ── Redis-backed fixed window ───────────────────────────────────────────────
+// Uses cacheManager.incr (Redis INCR + EXPIRE on first hit, in-memory fallback).
+// Fail-closed: any cache exception blocks the request with 429.
 
-interface RateLimitEntry {
-  count:     number;
-  resetTime: number;
+function windowSeconds(ms: number): number {
+  return Math.max(1, Math.ceil(ms / 1000));
 }
-
-const rateLimitStore: Record<string, RateLimitEntry> = {};
-
-// Cleanup stale entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
-  for (const key of Object.keys(rateLimitStore)) {
-    if (rateLimitStore[key].resetTime < now) {
-      delete rateLimitStore[key];
-    }
-  }
-}, 5 * 60 * 1000);
 
 // ── IP extraction ─────────────────────────────────────────────────────────────
 
@@ -88,26 +79,37 @@ export function createRateLimiter(
   message:     string = 'Too many requests, please try again later.',
   keyFn:       (req: VercelRequest) => string = getClientIp,
 ) {
+  const ttlSec = windowSeconds(windowMs);
   return async (req: VercelRequest, res: VercelResponse): Promise<boolean> => {
-    const key = keyFn(req);
-    const now = Date.now();
-
-    // Initialise or reset expired window
-    if (!rateLimitStore[key] || rateLimitStore[key].resetTime < now) {
-      rateLimitStore[key] = { count: 0, resetTime: now + windowMs };
+    let key: string;
+    try {
+      key = keyFn(req);
+    } catch {
+      res.status(429).json({ success: false, message });
+      return false;
     }
 
-    const entry = rateLimitStore[key];
-    entry.count++;
+    let count: number;
+    try {
+      count = await cacheManager.incr(`ratelimit:${key}`, ttlSec);
+    } catch {
+      // Fail-closed: do not allow traffic when the limiter itself is broken.
+      res.status(429).json({ success: false, message });
+      return false;
+    }
+    if (typeof count !== 'number' || Number.isNaN(count)) {
+      res.status(429).json({ success: false, message });
+      return false;
+    }
 
+    const resetAt = new Date(Date.now() + ttlSec * 1000).toISOString();
     res.setHeader('X-RateLimit-Limit',     maxRequests.toString());
-    res.setHeader('X-RateLimit-Remaining', Math.max(0, maxRequests - entry.count).toString());
-    res.setHeader('X-RateLimit-Reset',     new Date(entry.resetTime).toISOString());
+    res.setHeader('X-RateLimit-Remaining', Math.max(0, maxRequests - count).toString());
+    res.setHeader('X-RateLimit-Reset',     resetAt);
 
-    if (entry.count > maxRequests) {
-      const retryAfter = Math.ceil((entry.resetTime - now) / 1000);
-      res.setHeader('Retry-After', retryAfter.toString());
-      res.status(429).json({ success: false, message, retryAfter });
+    if (count > maxRequests) {
+      res.setHeader('Retry-After', ttlSec.toString());
+      res.status(429).json({ success: false, message, retryAfter: ttlSec });
       return false;
     }
     return true;
@@ -122,8 +124,15 @@ export function createRateLimiter(
 //            block "reception" or any other account.
 
 function loginKey(req: VercelRequest): string {
-  const ip       = getClientIp(req);
-  const username = (req.body?.username ?? 'unknown').toString().toLowerCase().trim();
+  const ip = getClientIp(req);
+  const raw = typeof req.body?.username === 'string' ? req.body.username : '';
+  let username = 'unknown';
+  try {
+    // Validated + normalized (lowercase, charset-checked) — shrinks spoof keyspace.
+    if (raw) username = validateUsername(raw).toLowerCase();
+  } catch {
+    username = 'unknown';
+  }
   return `login:${username}:${ip}`;
 }
 
@@ -141,9 +150,15 @@ export const authRateLimiter = createRateLimiter(
  * This prevents a user who mistyped their password several times (but
  * eventually succeeded) from being locked out on the next page load.
  */
-export function resetAuthLimiter(username: string, ipAddress: string): void {
-  const key = `login:${username.toLowerCase().trim()}:${ipAddress}`;
-  delete rateLimitStore[key];
+export async function resetAuthLimiter(username: string, ipAddress: string): Promise<void> {
+  const safe = (() => {
+    try {
+      return validateUsername(username).toLowerCase();
+    } catch {
+      return 'unknown';
+    }
+  })();
+  await cacheManager.del(`ratelimit:login:${safe}:${ipAddress}`);
 }
 
 // ── Token-refresh rate limiter  (IP key, higher quota) ───────────────────────

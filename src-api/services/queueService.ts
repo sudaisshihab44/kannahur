@@ -20,6 +20,7 @@ import { invalidateDashboardCache } from '../cache/dashboardCache.js';
 import { getCachedSettingsConfig } from '../cache/hospitalSettings.js';
 import { TokenStatus } from '../../src/types/index.js';
 import { mapToken } from '../utils/mappers.js';
+import { v4 as uuidv4 } from 'uuid';
 
 // BullMQ queues
 import { notificationQueue, auditQueue } from '../jobs/queues.js';
@@ -50,7 +51,7 @@ export async function addQueueLog(
   tokenId: string, tokenNumber: string, action: string, userId?: string
 ): Promise<void> {
   await insertQueueLog({
-    id:           `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id:           `log-${uuidv4()}`,
     token_id:     tokenId,
     token_number: tokenNumber,
     action,
@@ -61,7 +62,7 @@ export async function addQueueLog(
 
 export async function addAuditLog(action: string, detailText: string, userId?: string): Promise<void> {
   await insertQueueLog({
-    id:           `log-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id:           `log-${uuidv4()}`,
     token_id:     '',
     token_number: detailText,
     action,

@@ -1,12 +1,21 @@
 /**
  * api/middleware/authMiddleware.ts
  *
- * Authentication middleware — extracts and validates operator username from headers.
+ * Legacy passwordless header auth — DISABLED unless ALLOW_LEGACY_AUTH=true.
+ * Prefer requireJwtAuth (JWT Bearer) for all routes. This file is retained
+ * only for transitional legacy clients; it is currently unreferenced.
  */
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { findUserByUsername } from '../repositories/userRepository.js';
 
+function legacyAuthBlocked(res: VercelResponse): boolean {
+  if (process.env.ALLOW_LEGACY_AUTH === 'true') return false;
+  res.status(401).json({ success: false, message: 'Authentication required. Provide a Bearer token.' });
+  return true;
+}
+
 export async function requireAuth(req: VercelRequest, res: VercelResponse): Promise<boolean> {
+  if (legacyAuthBlocked(res)) return false;
   const operatorUsername = req.headers['x-operator-username'] as string;
 
   if (!operatorUsername?.trim()) {
@@ -29,6 +38,7 @@ export async function requireAuth(req: VercelRequest, res: VercelResponse): Prom
 }
 
 export async function requireAdmin(req: VercelRequest, res: VercelResponse): Promise<boolean> {
+  if (legacyAuthBlocked(res)) return false;
   const operatorUsername = req.headers['x-operator-username'] as string;
 
   if (!operatorUsername?.trim()) {

@@ -14,6 +14,7 @@
  *   notify-your-turn       — patient is being called now
  */
 import { Worker, type Job } from 'bullmq';
+import { v4 as uuidv4 } from 'uuid';
 import { insertNotificationLog } from '../../repositories/settingsRepository.js';
 import { QUEUE, JOB } from '../jobTypes.js';
 import type {
@@ -91,7 +92,7 @@ async function logNotification(
   type: string
 ): Promise<void> {
   await insertNotificationLog({
-    id: `wa-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    id: `wa-${uuidv4()}`,
     token_id: tokenId,
     token_number: tokenNumber,
     patient_name: patientName,

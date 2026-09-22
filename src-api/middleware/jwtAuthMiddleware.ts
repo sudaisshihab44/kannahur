@@ -2,7 +2,11 @@
  * api/middleware/jwtAuthMiddleware.ts
  *
  * JWT-based authentication middleware with role-based access control.
- * BACKWARD COMPATIBLE: Also supports x-operator-username header for legacy clients.
+ *
+ * Passwordless header auth (x-operator-username) is DISABLED by default and
+ * only honoured when ALLOW_LEGACY_AUTH=true — set it only for a transitional
+ * legacy client, with JWT required everywhere else. JWT (Bearer) is the
+ * primary path.
  *
  * Performance optimisation (Task 5):
  *   The legacy x-operator-username path previously hit the DB on EVERY request.
@@ -26,6 +30,11 @@ import { findUserByUsername } from '../repositories/userRepository.js';
 import { extractBearerToken } from '../utils/jwtUtils.js';
 import { mapUser } from '../utils/mappers.js';
 import { cacheManager } from '../utils/redisCache.js';
+
+// Set ALLOW_LEGACY_AUTH=true only while a legacy client still sends the
+// passwordless x-operator-username header. Default off: header is ignored.
+// ponytail: env flag, not a config object — one line, no new plumbing.
+const LEGACY_AUTH_ENABLED = process.env.ALLOW_LEGACY_AUTH === 'true';
 
 // Cache TTL for legacy user lookups.  Short enough that permission / deactivation
 // changes propagate quickly; long enough to cover a burst of rapid requests
@@ -82,8 +91,13 @@ export async function requireJwtAuth(req: VercelRequest, res: VercelResponse): P
     return true;
   }
 
-  // ── Legacy path (x-operator-username header) — now Redis-cached ───────────
-  const operatorUsername = (req.headers['x-operator-username'] as string)?.trim();
+  // ── Legacy path (x-operator-username header) — gated, Redis-cached ────────
+  // Passwordless: only when explicitly enabled for transition. Role/permission
+  // changes propagate via 60 s TTL plus explicit invalidation in
+  // adminController on every user update (see invalidateLegacyUserCache).
+  const operatorUsername = LEGACY_AUTH_ENABLED
+    ? (req.headers['x-operator-username'] as string)?.trim()
+    : undefined;
 
   if (operatorUsername) {
     const userRow = await findUserCached(operatorUsername);  // ← Redis first, DB on miss
@@ -117,7 +131,7 @@ export async function requireJwtAuth(req: VercelRequest, res: VercelResponse): P
   // ── No authentication provided ────────────────────────────────────────────
   res.status(401).json({
     success: false,
-    message: 'Authentication required. Provide Bearer token or x-operator-username header.',
+    message: 'Authentication required. Provide a Bearer token.',
   });
   return false;
 }
@@ -177,7 +191,9 @@ export async function optionalJwtAuth(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const operatorUsername = (req.headers['x-operator-username'] as string)?.trim();
+  const operatorUsername = LEGACY_AUTH_ENABLED
+    ? (req.headers['x-operator-username'] as string)?.trim()
+    : undefined;
   if (operatorUsername) {
     const userRow = await findUserCached(operatorUsername);
     if (userRow) {

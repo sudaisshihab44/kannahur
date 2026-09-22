@@ -23,11 +23,14 @@ global:
 # ── Scrape targets ────────────────────────────────────────────────────────────
 scrape_configs:
 
-  # InclusyQ API
+  # Inclusyq API — /api/metrics requires a bearer token when the app
+  # has METRICS_TOKEN set (mandatory in prod). Setup:
+  #   1. printf '%s' "$METRICS_TOKEN" > monitoring/.metrics_token && chmod 600 monitoring/.metrics_token
+  #      (.metrics_token is gitignored — never commit the real token)
+  #   2. Uncomment bearer_token_file below + the .metrics_token volume in docker-compose.yml
   - job_name: 'inclusyq-api'
     metrics_path: /api/metrics
-    # If METRICS_TOKEN is set, add it here:
-    # bearer_token: 'your-token'
+    # bearer_token_file: '/etc/prometheus/metrics_token'
     static_configs:
       - targets: ['app:3000']
         labels:

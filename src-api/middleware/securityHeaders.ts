@@ -34,9 +34,12 @@ export function applySecurityHeaders(req: VercelRequest, res: VercelResponse): v
   }
 
   // Content Security Policy
+  // ponytail: no 'unsafe-eval' anywhere; script-src has no 'unsafe-inline'
+  // (Vite emits separate JS files, so 'self' suffices). style-src keeps
+  // 'unsafe-inline' — required by CSS-in-JS, not flagged for script execution.
   const csp = [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "img-src 'self' data: https: blob:",

@@ -7,4 +7,10 @@ coverage/
 .env*
 !.env.example
 
+# Test seed with synthetic PII — never commit real patient data
+db.json
+
+# Prometheus scrape token (see monitoring/prometheus.yml)
+monitoring/.metrics_token
+
 .vercel

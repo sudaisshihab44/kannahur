@@ -99,7 +99,6 @@ export default defineConfig(() => {
         'multer',
         'helmet',
         'hpp',
-        'xss-clean',
         'isomorphic-dompurify',
         '@google/genai',
       ],

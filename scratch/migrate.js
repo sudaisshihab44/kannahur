@@ -1,14 +1,15 @@
 const { Pool } = require('pg');
 
-// Supabase direct connection — password is the one set in Supabase dashboard
-// Try common connection strings
+// Supabase direct connection — password must come from env (never hardcoded).
+// ponytail: fail fast instead of a wrong-password fallback.
+if (!process.env.DB_PASS) throw new Error('DB_PASS is not set.');
 const configs = [
   // Transaction pooler (port 6543)
-  { host: 'aws-0-ap-south-1.pooler.supabase.com', port: 6543, database: 'postgres', user: 'postgres.fjkogjwwnpsocdxoikiu', password: process.env.DB_PASS || 'Admin@123', ssl: { rejectUnauthorized: false } },
+  { host: 'aws-0-ap-south-1.pooler.supabase.com', port: 6543, database: 'postgres', user: 'postgres.fjkogjwwnpsocdxoikiu', password: process.env.DB_PASS, ssl: { rejectUnauthorized: false } },
   // Session pooler (port 5432)
-  { host: 'aws-0-ap-south-1.pooler.supabase.com', port: 5432, database: 'postgres', user: 'postgres.fjkogjwwnpsocdxoikiu', password: process.env.DB_PASS || 'Admin@123', ssl: { rejectUnauthorized: false } },
+  { host: 'aws-0-ap-south-1.pooler.supabase.com', port: 5432, database: 'postgres', user: 'postgres.fjkogjwwnpsocdxoikiu', password: process.env.DB_PASS, ssl: { rejectUnauthorized: false } },
   // Direct connection
-  { host: 'db.fjkogjwwnpsocdxoikiu.supabase.co', port: 5432, database: 'postgres', user: 'postgres', password: process.env.DB_PASS || 'Admin@123', ssl: { rejectUnauthorized: false } },
+  { host: 'db.fjkogjwwnpsocdxoikiu.supabase.co', port: 5432, database: 'postgres', user: 'postgres', password: process.env.DB_PASS, ssl: { rejectUnauthorized: false } },
 ];
 
 const migration = `
